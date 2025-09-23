@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "430808314566",
+    "project_id": "cetis-asistencia",
+    "storage_bucket": "cetis-asistencia.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:430808314566:android:9ae083c60ac88c88aeddc7",
+        "android_client_info": {
+          "package_name": "com.example.pase_de_lista"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDh_XCY98esstDc80cEQqIRG6XstVbbX8g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
