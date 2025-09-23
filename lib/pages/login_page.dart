@@ -23,41 +23,40 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _login() async {
-  if (userCtrl.text.isEmpty || passCtrl.text.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Ingrese usuario y contraseña')),
-    );
-    return;
-  }
+    if (userCtrl.text.isEmpty || passCtrl.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ingrese usuario y contraseña')),
+      );
+      return;
+    }
 
-  setState(() => loading = true);
-  try {
-    await FirebaseAuth.instance.signInWithEmailAndPassword(
-      email: userCtrl.text.trim(),
-      password: passCtrl.text,
-    );
-    if (!mounted) return;
-    Navigator.pushReplacementNamed(
-      context,
-      DashboardPage.route,
-      arguments: userCtrl.text, // si quieres seguir pasando el “usuario”
-    );
-  } on FirebaseAuthException catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(e.message ?? 'Error de autenticación')),
-    );
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Error: $e')),
-    );
-  } finally {
-    if (mounted) setState(() => loading = false);
+    setState(() => loading = true);
+    try {
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: userCtrl.text.trim(),
+        password: passCtrl.text,
+      );
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(
+        context,
+        DashboardPage.route,
+        arguments: userCtrl.text, // si quieres seguir pasando el “usuario”
+      );
+    } on FirebaseAuthException catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message ?? 'Error de autenticación')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
   }
-}
 
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
       body: Center(
         child: ConstrainedBox(

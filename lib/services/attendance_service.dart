@@ -1,98 +1,110 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
 
-/// /teachers/{teacherId}/attendance/{groupId}/sessions/{yyyy-MM-dd}
 class AttendanceService {
   AttendanceService._();
-  static final AttendanceService instance = AttendanceService._();
+  static final instance = AttendanceService._();
 
   final _db = FirebaseFirestore.instance;
+  final _auth = FirebaseAuth.instance;
 
-  String _teacherId([String? teacherId]) {
-    final uid = teacherId ?? FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) {
-      throw Exception(
-        'Sin autenticación. Inicia sesión (anónima o proveedor) para acceder a /teachers/{uid}/…',
-      );
-    }
-    return uid;
+  String get _uid {
+    final u = _auth.currentUser?.uid;
+    if (u == null) throw StateError('No hay sesión iniciada');
+    return u;
   }
 
-  CollectionReference<Map<String, dynamic>> _sessionsColl({
-    required String groupId,
-    String? teacherId,
-  }) {
-    final tid = _teacherId(teacherId);
-    return _db
-        .collection('teachers')
-        .doc(tid)
-        .collection('attendance')
-        .doc(groupId)
-        .collection('sessions');
-  }
-
+  /// Crea/actualiza una sesión de asistencia (doc: sessions/{yyyy-MM-dd})
   Future<void> saveAttendance({
     required String groupId,
     required String yyyymmdd,
     required List<Map<String, dynamic>> students,
     Map<String, dynamic>? sessionMeta,
-    String? teacherId,
   }) async {
-    final doc = _sessionsColl(groupId: groupId, teacherId: teacherId).doc(yyyymmdd);
+    final ref = _db
+        .collection('teachers')
+        .doc(_uid)
+        .collection('groups')
+        .doc(groupId)
+        .collection('sessions')
+        .doc(yyyymmdd);
 
-    int p = 0, r = 0, a = 0;
-    for (final s in students) {
-      final st = (s['status'] ?? 'none').toString();
-      if (st == 'present') p++;
-      if (st == 'late') r++;
-      if (st == 'absent') a++;
-    }
-    final total = students.length;
+    final present = students.where((m) => m['status'] == 'present').length;
+    final late = students.where((m) => m['status'] == 'late').length;
+    final absent = students.where((m) => m['status'] == 'absent').length;
 
-    await doc.set({
+    await ref.set({
+      'id': yyyymmdd,
       'date': yyyymmdd,
-      'updatedAt': FieldValue.serverTimestamp(),
       'students': students,
-      'present': p,
-      'late': r,
-      'absent': a,
-      'total': total,
+      'present': present,
+      'late': late,
+      'absent': absent,
+      'updatedAt': FieldValue.serverTimestamp(),
       if (sessionMeta != null) ...sessionMeta,
     }, SetOptions(merge: true));
   }
 
-  Future<List<Map<String, dynamic>>> listSessions({
+  /// Lee una sesión específica
+  Future<Map<String, dynamic>?> fetchSession({
     required String groupId,
-    int limit = 50,
-    DateTime? dateFrom,
-    DateTime? dateTo,
-    String? teacherId,
+    required String yyyymmdd,
   }) async {
-    final coll = _sessionsColl(groupId: groupId, teacherId: teacherId);
-    Query<Map<String, dynamic>> q = coll.orderBy('date', descending: true);
+    final ref = _db
+        .collection('teachers')
+        .doc(_uid)
+        .collection('groups')
+        .doc(groupId)
+        .collection('sessions')
+        .doc(yyyymmdd);
 
-    if (dateFrom != null && dateTo != null) {
-      final d = _fmt(dateFrom);
-      q = coll.where('date', isEqualTo: d);
-    } else if (dateFrom != null) {
-      final d = _fmt(dateFrom);
-      q = coll.where('date', isGreaterThanOrEqualTo: d);
-    }
-    if (limit > 0) q = q.limit(limit);
-
-    final snap = await q.get();
-    return snap.docs.map((d) => d.data()..['id'] = d.id).toList();
+    final snap = await ref.get();
+    if (!snap.exists) return null;
+    return snap.data();
   }
 
+  /// Lista sesiones del grupo (con filtros por fecha opcionales)
+  Future<List<Map<String, dynamic>>> listSessions({
+    required String groupId,
+    int limit = 200,
+    DateTime? dateFrom,
+    DateTime? dateTo,
+  }) async {
+    Query<Map<String, dynamic>> q = _db
+        .collection('teachers')
+        .doc(_uid)
+        .collection('groups')
+        .doc(groupId)
+        .collection('sessions')
+        .orderBy('date', descending: true);
+
+    if (dateFrom != null) {
+      final from = DateFormat('yyyy-MM-dd').format(dateFrom);
+      q = q.where('date', isGreaterThanOrEqualTo: from);
+    }
+    if (dateTo != null) {
+      final to = DateFormat('yyyy-MM-dd').format(dateTo);
+      q = q.where('date', isLessThanOrEqualTo: to);
+    }
+
+    q = q.limit(limit);
+    final snap = await q.get();
+    return snap.docs.map((d) => d.data()).toList();
+  }
+
+  /// 🔴 Eliminar una sesión (para tu botón "Eliminar")
   Future<void> deleteAttendance({
     required String groupId,
     required String yyyymmdd,
-    String? teacherId,
   }) async {
-    final doc = _sessionsColl(groupId: groupId, teacherId: teacherId).doc(yyyymmdd);
-    await doc.delete();
+    final ref = _db
+        .collection('teachers')
+        .doc(_uid)
+        .collection('groups')
+        .doc(groupId)
+        .collection('sessions')
+        .doc(yyyymmdd);
+    await ref.delete();
   }
-
-  static String _fmt(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 }

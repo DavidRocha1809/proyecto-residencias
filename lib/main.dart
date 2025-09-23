@@ -1,79 +1,90 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+
+import 'models.dart';
+import 'pages/login_page.dart';
+import 'pages/dashboard_page.dart';
+import 'pages/attendance_page.dart';
+import 'pages/reports_page.dart';
+
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:path_provider/path_provider.dart' as pp;
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
-import 'pages/dashboard_page.dart';
 
-/// Estado simple para mostrar advertencias de autenticación en UI
-class AuthGuard {
-  static bool authOk = false;
-  static String? authWarning;
-}
-
-Future<void> _bootstrap() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 0) Localización para Intl (necesaria para DateFormat con 'es_MX')
-  Intl.defaultLocale = 'es_MX';
-  await initializeDateFormatting(
-    'es_MX',
-  ); // <-- clave para evitar LocaleDataException
+  // Hive: carpeta de documentos de la app y box local para sesiones
+  final dir = await pp.getApplicationDocumentsDirectory();
+  await Hive.initFlutter(dir.path);
+  await Hive.openBox('sessions');
 
-  // 1) Firebase
+  // Locale por defecto en español (México)
+  await initializeDateFormatting('es_MX');
+  Intl.defaultLocale = 'es_MX';
+
+  // Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // 2) Hive
-  await Hive.initFlutter();
-
-  // 3) Auth: intenta anónimo pero sin crashear si está deshabilitado
-  try {
-    final auth = FirebaseAuth.instance;
-    if (auth.currentUser == null) {
-      await auth.signInAnonymously();
-    }
-    AuthGuard.authOk = true;
-  } on FirebaseAuthException catch (e) {
-    AuthGuard.authOk = false;
-    if (e.code == 'operation-not-allowed' ||
-        e.code == 'admin-restricted-operation') {
-      AuthGuard.authWarning =
-          'No se pudo iniciar sesión anónima. Habilita "Anonymous" en Firebase Auth o usa otro proveedor.';
-    } else {
-      AuthGuard.authWarning = 'No se pudo autenticar: ${e.code}';
-    }
-  } catch (e) {
-    AuthGuard.authOk = false;
-    AuthGuard.authWarning = 'Error de autenticación: $e';
-  }
+  runApp(const AsistenciasApp());
 }
 
-void main() async {
-  await _bootstrap();
-  runApp(const MyApp());
-}
+class AsistenciasApp extends StatelessWidget {
+  const AsistenciasApp({super.key});
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'Sistema de Asistencia - CETIS',
       debugShowCheckedModeBanner: false,
-      title: 'Sistema CETIS 31',
       theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF7A3E3E),
         useMaterial3: true,
+        colorSchemeSeed: const Color(0xFFB71C1C),
       ),
-      // Opcional: declarar locales soportados
-      supportedLocales: const [Locale('es', 'MX'), Locale('es'), Locale('en')],
+
+      // Localización para pickers, labels, formateo, etc.
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('es', 'MX'), Locale('en', 'US')],
       locale: const Locale('es', 'MX'),
-      home: DashboardPage(
-        teacherName: 'Docente',
-        authWarning: AuthGuard.authWarning,
-      ),
+
+      // Ruta inicial
+      initialRoute: LoginPage.route,
+
+      // Rutas simples (sin argumentos)
+      routes: {
+        LoginPage.route: (_) => const LoginPage(),
+        DashboardPage.route: (_) => const DashboardPage(teacherName: 'Docente'),
+      },
+
+      // Rutas con argumentos
+      onGenerateRoute: (settings) {
+        if (settings.name == AttendancePage.route) {
+          final group = settings.arguments as GroupClass;
+          return MaterialPageRoute(
+            builder:
+                (_) => AttendancePage(
+                  groupClass: group,
+                  initialDate: DateTime.now(),
+                ),
+          );
+        }
+        if (settings.name == ReportsPage.route) {
+          // IMPORTANTE: usar initialGroup (no 'groupClass')
+          final group = settings.arguments as GroupClass?;
+          return MaterialPageRoute(
+            builder: (_) => ReportsPage(initialGroup: group),
+          );
+        }
+        return null;
+      },
     );
   }
 }

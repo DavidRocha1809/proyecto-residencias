@@ -5,23 +5,14 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../models.dart';
-import '../local_groups.dart' as LG; // helpers + storage local
+import '../local_groups.dart' as LG; // alias helpers + storage local
 import 'attendance_page.dart';
 import 'sessions_page.dart';
-import 'students_editor_page.dart'; // editor de alumnos
 
 class DashboardPage extends StatefulWidget {
   static const route = '/dashboard';
   final String teacherName;
-
-  /// Mensaje opcional para advertir problema de autenticación (lo muestra al cargar)
-  final String? authWarning;
-
-  const DashboardPage({
-    super.key,
-    this.teacherName = 'Docente',
-    this.authWarning,
-  });
+  const DashboardPage({super.key, this.teacherName = 'Docente'});
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
@@ -35,17 +26,6 @@ class _DashboardPageState extends State<DashboardPage> {
   void initState() {
     super.initState();
     _refreshGroups();
-
-    // Si main.dart nos dejó una advertencia de auth, muéstrala una sola vez
-    final warn = widget.authWarning;
-    if (warn != null && warn.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(warn)));
-      });
-    }
   }
 
   Future<void> _refreshGroups() async {
@@ -72,9 +52,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
       if (rows.isEmpty) {
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('CSV vacío')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('CSV vacío')),
+        );
         return;
       }
 
@@ -117,14 +97,7 @@ class _DashboardPageState extends State<DashboardPage> {
         final matricula = row[col['matricula']!]!.toString().trim();
         final name = row[col['name']!]!.toString().trim();
 
-        if ([
-          groupName,
-          subject,
-          turno,
-          dia,
-          matricula,
-          name,
-        ].any((s) => s.isEmpty)) {
+        if ([groupName, subject, turno, dia, matricula, name].any((s) => s.isEmpty)) {
           continue;
         }
 
@@ -147,31 +120,30 @@ class _DashboardPageState extends State<DashboardPage> {
         });
       }
 
+      // Confirmación
       final totalGroups = groups.length;
       final totalStudents = groups.values
           .map((g) => (g['students'] as List).length)
           .fold<int>(0, (a, b) => a + b);
 
-      final ok =
-          await showDialog<bool>(
+      final ok = await showDialog<bool>(
             context: context,
-            builder:
-                (_) => AlertDialog(
-                  title: const Text('Confirmar importación'),
-                  content: Text(
-                    'Se importarán $totalGroups grupo(s) y $totalStudents alumno(s) (local).',
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Cancelar'),
-                    ),
-                    FilledButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Importar'),
-                    ),
-                  ],
+            builder: (_) => AlertDialog(
+              title: const Text('Confirmar importación'),
+              content: Text(
+                'Se importarán $totalGroups grupo(s) y $totalStudents alumno(s) (local).',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancelar'),
                 ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Importar'),
+                ),
+              ],
+            ),
           ) ??
           false;
 
@@ -224,79 +196,24 @@ class _DashboardPageState extends State<DashboardPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error al importar: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al importar: $e')),
+      );
     }
-  }
-
-  Future<void> _openEditorPicker() async {
-    // Muestra un modal con la lista de grupos; al elegir uno, abre el editor
-    final Map<String, List<GroupClass>> grouped = {};
-    for (final g in _groups) {
-      final key = '${g.subject} — ${g.groupName}';
-      grouped.putIfAbsent(key, () => []);
-      grouped[key]!.add(g);
-    }
-
-    final keySelected = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (_) {
-        final keys = grouped.keys.toList()..sort();
-        return ListView.separated(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          itemBuilder: (_, i) {
-            final k = keys[i];
-            final g = grouped[k]!.first; // usamos la primera variante
-            return ListTile(
-              leading: const Icon(Icons.list_alt_outlined),
-              title: Text(k),
-              subtitle: Text('Turno ${g.turno ?? ''} · ${g.dia ?? ''}'),
-              onTap: () => Navigator.pop(context, k),
-            );
-          },
-          separatorBuilder: (_, __) => const Divider(height: 1),
-          itemCount: keys.length,
-        );
-      },
-    );
-
-    if (keySelected == null) return;
-
-    // Encuentra el GroupClass base para ese key
-    final parts = keySelected.split(' — ');
-    if (parts.length < 2) return;
-    final subject = parts[0];
-    final groupName = parts[1];
-
-    final chosen = _groups.firstWhere(
-      (g) => g.subject == subject && g.groupName == groupName,
-      orElse: () => _groups.first,
-    );
-
-    if (!mounted) return;
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => StudentsEditorPage(groupClass: chosen)),
-    );
-    // Al volver, refrescamos para que se vea el total actualizado
-    await _refreshGroups();
   }
 
   @override
   Widget build(BuildContext context) {
     // Filtro por texto
-    final filtered =
-        _groups.where((g) {
-          final q = _query.toLowerCase();
-          return g.subject.toLowerCase().contains(q) ||
-              g.groupName.toLowerCase().contains(q) ||
-              (g.turno ?? '').toLowerCase().contains(q) ||
-              (g.dia ?? '').toLowerCase().contains(q);
-        }).toList();
+    final filtered = _groups.where((g) {
+      final q = _query.toLowerCase();
+      return g.subject.toLowerCase().contains(q) ||
+          g.groupName.toLowerCase().contains(q) ||
+          (g.turno ?? '').toLowerCase().contains(q) ||
+          (g.dia ?? '').toLowerCase().contains(q);
+    }).toList();
 
-    // Agrupar por (subject + groupName) para una tarjeta por grupo
+    // Agrupar por (subject + groupName)
     final Map<String, List<GroupClass>> grouped = {};
     for (final g in filtered) {
       final key = '${g.subject}|||${g.groupName}';
@@ -320,14 +237,10 @@ class _DashboardPageState extends State<DashboardPage> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Sistema CETIS 31',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-            Text(
-              'Bienvenido, ${widget.teacherName}',
-              style: Theme.of(context).textTheme.labelMedium,
-            ),
+            const Text('Sistema CETIS 31',
+                style: TextStyle(fontWeight: FontWeight.w700)),
+            Text('Bienvenido, ${widget.teacherName}',
+                style: Theme.of(context).textTheme.labelMedium),
           ],
         ),
         actions: [
@@ -358,42 +271,24 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
           ),
           Expanded(
-            child:
-                grouped.isEmpty
-                    ? const Center(child: Text('Aún no hay grupos importados'))
-                    : ListView.separated(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      itemBuilder: (_, i) {
-                        final key = grouped.keys.elementAt(i);
-                        final list = grouped[key]!;
-                        final subject = list.first.subject;
-                        final groupName = list.first.groupName;
-                        return _GroupMergedCard(
-                          subject: subject,
-                          groupName: groupName,
-                          groups: list,
-                        );
-                      },
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
-                      itemCount: grouped.length,
-                    ),
+            child: grouped.isEmpty
+                ? const Center(child: Text('Aún no hay grupos importados'))
+                : ListView.separated(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
+                    itemBuilder: (_, i) {
+                      final key = grouped.keys.elementAt(i);
+                      final list = grouped[key]!;
+                      final subject = list.first.subject;
+                      final groupName = list.first.groupName;
+                      return _GroupMergedCard(
+                          subject: subject, groupName: groupName, groups: list);
+                    },
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemCount: grouped.length,
+                  ),
           ),
         ],
-      ),
-      // 🔻 Botón fijo abajo: Editar lista
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.all(12),
-        child: SizedBox(
-          height: 48,
-          child: OutlinedButton.icon(
-            onPressed: _openEditorPicker,
-            icon: const Icon(Icons.edit_note_outlined),
-            label: const Text('Editar lista'),
-          ),
-        ),
       ),
     );
   }
@@ -416,11 +311,9 @@ class _GroupMergedCard extends StatelessWidget {
     // Usamos el primer registro del grupo para abrir Tomar Lista / Historial
     final GroupClass main = groups.first;
 
-    // (opcional) suma total de alumnos si ya se carga en GroupClass
-    final totalStudents = groups.fold<int>(
-      0,
-      (sum, g) => sum + g.students.length,
-    );
+    // (opcional) suma total de alumnos si ya los cargas en GroupClass
+    final totalStudents =
+        groups.fold<int>(0, (sum, g) => sum + g.students.length);
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -441,46 +334,36 @@ class _GroupMergedCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        subject,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 18,
-                        ),
-                      ),
+                      Text(subject,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w700, fontSize: 18)),
                       const SizedBox(height: 4),
-                      Text(
-                        groupName,
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
+                      Text(groupName,
+                          style: Theme.of(context).textTheme.labelLarge),
                       const SizedBox(height: 6),
                       // Lista de variantes (turno/día)
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children:
-                            groups.map((g) {
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 4),
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.auto_awesome, size: 16),
-                                    const SizedBox(width: 4),
-                                    Text(g.turno ?? ''),
-                                    const SizedBox(width: 10),
-                                    const Icon(Icons.event_note, size: 16),
-                                    const SizedBox(width: 4),
-                                    Text(g.dia ?? ''),
-                                    const SizedBox(width: 10),
-                                    const Icon(
-                                      Icons.people_alt_outlined,
-                                      size: 16,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text('${g.students.length}'),
-                                  ],
-                                ),
-                              );
-                            }).toList(),
+                        children: groups.map((g) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.auto_awesome, size: 16),
+                                const SizedBox(width: 4),
+                                Text(g.turno ?? ''),
+                                const SizedBox(width: 10),
+                                const Icon(Icons.event_note, size: 16),
+                                const SizedBox(width: 4),
+                                Text(g.dia ?? ''),
+                                const SizedBox(width: 10),
+                                const Icon(Icons.people_alt_outlined, size: 16),
+                                const SizedBox(width: 4),
+                                Text('${g.students.length}'),
+                              ],
+                            ),
+                          );
+                        }).toList(),
                       ),
                       if (totalStudents > 0) ...[
                         const SizedBox(height: 4),
@@ -504,11 +387,10 @@ class _GroupMergedCard extends StatelessWidget {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder:
-                              (_) => AttendancePage(
-                                groupClass: main,
-                                initialDate: DateTime.now(),
-                              ),
+                          builder: (_) => AttendancePage(
+                            groupClass: main,
+                            initialDate: DateTime.now(),
+                          ),
                         ),
                       );
                     },

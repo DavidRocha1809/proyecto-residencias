@@ -3,7 +3,6 @@ import 'package:intl/intl.dart';
 
 import '../models.dart';
 import '../services/attendance_service.dart';
-import '../local_store.dart';
 import '../local_groups.dart' as LG;
 import 'attendance_page.dart';
 
@@ -31,140 +30,138 @@ class _SessionsPageState extends State<SessionsPage> {
     setState(() => _loading = true);
     try {
       final groupId = LG.groupKeyOf(widget.groupClass);
-      final docs = await AttendanceService.instance.listSessions(
+      _items = await AttendanceService.instance.listSessions(
         groupId: groupId,
-        limit: 100,
+        limit: 200,
       );
-      _items = docs;
-    } catch (e) {
-      _items = [];
+    } finally {
       if (mounted) {
-        final msg = e.toString().contains('permission-denied')
-            ? 'No tienes permisos para ver el historial. Revisa autenticación y Reglas.'
-            : 'No se pudo cargar historial: $e';
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+        setState(() => _loading = false);
       }
     }
+  }
+
+  Future<void> _delete(String yyyymmdd) async {
+    final ok =
+        await showDialog<bool>(
+          context: context,
+          builder:
+              (_) => AlertDialog(
+                title: const Text('Eliminar sesión'),
+                content: Text('¿Eliminar el pase de lista del $yyyymmdd?'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Cancelar'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                    child: const Text('Eliminar'),
+                  ),
+                ],
+              ),
+        ) ??
+        false;
+
+    if (!ok) return;
+
+    final groupId = LG.groupKeyOf(widget.groupClass);
+    await AttendanceService.instance.deleteAttendance(
+      groupId: groupId,
+      yyyymmdd: yyyymmdd,
+    );
+    await _load();
     if (!mounted) return;
-    setState(() => _loading = false);
-  }
-
-  Future<void> _exportPdf(Map<String, dynamic> item) async {
-    try {
-      final String ymd = (item['date'] ?? item['yyyymmdd'] ?? '').toString();
-      final date = ymd.length >= 10 ? DateTime.parse(ymd.substring(0, 10)) : DateTime.now();
-      await LocalStore.exportTodayPdfFallback(widget.groupClass, date);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo exportar PDF: $e')),
-      );
-    }
-  }
-
-  Future<void> _delete(Map<String, dynamic> item) async {
-    try {
-      final String ymd = (item['date'] ?? item['yyyymmdd'] ?? '').toString();
-      final date = ymd.length >= 10 ? DateTime.parse(ymd.substring(0, 10)) : DateTime.now();
-      final groupId = LG.groupKeyOf(widget.groupClass);
-
-      final ok = await showDialog<bool>(
-            context: context,
-            builder: (_) => AlertDialog(
-              title: const Text('Eliminar registro'),
-              content: Text('¿Eliminar definitivamente la sesión del $ymd?'),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-                FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Eliminar')),
-              ],
-            ),
-          ) ??
-          false;
-      if (!ok) return;
-
-      await AttendanceService.instance.deleteAttendance(
-        groupId: groupId,
-        yyyymmdd: ymd.substring(0, 10),
-      );
-      await LocalStore.removeSession(classId: groupId, date: date);
-
-      await _load();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Registro eliminado ✅')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo eliminar: $e')),
-      );
-    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Sesión eliminada')));
   }
 
   @override
   Widget build(BuildContext context) {
-    final df = DateFormat("EEEE d 'de' MMMM, yyyy", 'es_MX');
-
     return Scaffold(
-      appBar: AppBar(
-        leading: const BackButton(),
-        title: const Text('Historial de asistencia'),
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemBuilder: (_, i) {
-                final it = _items[i];
-                final String ymd = (it['date'] ?? it['yyyymmdd'] ?? '').toString();
-                final date = ymd.length >= 10 ? DateTime.parse(ymd.substring(0, 10)) : DateTime.now();
-                final present = it['present'] ?? it['P'] ?? 0;
-                final late = it['late'] ?? it['R'] ?? 0;
-                final absent = it['absent'] ?? it['A'] ?? 0;
-                final total = it['total'] ?? it['T'] ?? (present + late + absent);
+      appBar: AppBar(title: const Text('Historial de asistencia')),
+      body:
+          _loading
+              ? const Center(child: CircularProgressIndicator())
+              : RefreshIndicator(
+                onRefresh: _load,
+                child:
+                    _items.isEmpty
+                        ? ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: const [
+                            SizedBox(height: 180),
+                            Center(child: Text('Sin sesiones')),
+                          ],
+                        )
+                        : ListView.separated(
+                          padding: const EdgeInsets.all(12),
+                          itemCount: _items.length,
+                          separatorBuilder:
+                              (_, __) => const SizedBox(height: 8),
+                          itemBuilder: (_, i) {
+                            final it = _items[i];
+                            final id = (it['id'] as String); // yyyymmdd
+                            final dt = DateTime.parse(id);
+                            final dateStr = DateFormat(
+                              'EEEE d MMM, y',
+                              'es_MX',
+                            ).format(dt);
+                            final present = it['present'] ?? 0;
+                            final late = it['late'] ?? 0;
+                            final absent = it['absent'] ?? 0;
+                            final total = it['total'] ?? 0;
 
-                return Card(
-                  color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(.4),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  child: ListTile(
-                    title: Text(df.format(date)),
-                    subtitle: Text('P: $present · R: $late · A: $absent · Total: $total'),
-                    trailing: Wrap(
-                      spacing: 8,
-                      children: [
-                        IconButton(
-                          tooltip: 'Exportar a PDF',
-                          icon: const Icon(Icons.picture_as_pdf_outlined),
-                          onPressed: () => _exportPdf(it),
-                        ),
-                        IconButton(
-                          tooltip: 'Editar',
-                          icon: const Icon(Icons.edit_outlined),
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => AttendancePage(
-                                  groupClass: widget.groupClass,
-                                  initialDate: date,
+                            return Card(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: ListTile(
+                                title: Text(
+                                  dateStr,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  'P: $present  •  R: $late  •  A: $absent  •  Total: $total',
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      tooltip: 'Abrir para editar',
+                                      icon: const Icon(Icons.edit_outlined),
+                                      onPressed: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder:
+                                                (_) => AttendancePage(
+                                                  groupClass: widget.groupClass,
+                                                  // ⚠️ Requiere que AttendancePage acepte este parámetro opcional:
+                                                  // final DateTime? initialDate;
+                                                  // y que lo use para cargar la sesión existente.
+                                                  initialDate: dt,
+                                                ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Eliminar',
+                                      icon: const Icon(Icons.delete_outline),
+                                      onPressed: () => _delete(id),
+                                    ),
+                                  ],
                                 ),
                               ),
                             );
                           },
                         ),
-                        IconButton(
-                          tooltip: 'Eliminar',
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () => _delete(it),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemCount: _items.length,
-            ),
+              ),
     );
   }
 }

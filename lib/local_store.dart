@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
@@ -8,28 +6,17 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import 'models.dart';
-import 'local_groups.dart' as LG;
-import 'services/attendance_service.dart';
+import 'local_groups.dart' as LG; // alias para groupKeyOf
 
 class LocalStore {
   static const _boxName = 'sessions';
 
-  // ------ utils ------
+  // --- utilidades internas ---
   static Future<Box> _ensureBox() async {
-    // Si Hive no se ha inicializado por cualquier motivo, lo iniciamos aquí
-    try {
-      if (!Hive.isBoxOpen(_boxName)) {
-        await Hive.openBox(_boxName);
-      }
-      return Hive.box(_boxName);
-    } on HiveError {
-      // Intento de “autoinit” seguro
-      await Hive.initFlutter();
-      if (!Hive.isBoxOpen(_boxName)) {
-        await Hive.openBox(_boxName);
-      }
-      return Hive.box(_boxName);
+    if (!Hive.isBoxOpen(_boxName)) {
+      await Hive.openBox(_boxName);
     }
+    return Hive.box(_boxName);
   }
 
   static String _key(String classId, DateTime date) {
@@ -52,12 +39,14 @@ class LocalStore {
         return 'Sin marcar';
     }
   }
-  // -------------------
+  // --- fin utilidades internas ---
 
+  /// Guarda la lista del día para una clase (en almacenamiento local)
+  /// Usa la lista de estudiantes ACTUALIZADA que viene de la pantalla.
   static Future<void> saveTodaySession({
     required GroupClass groupClass,
     required DateTime date,
-    required List<Student> students,
+    required List<Student> students, // <- CLAVE: guardamos lo marcado
   }) async {
     final box = await _ensureBox();
     final key = _key(LG.groupKeyOf(groupClass), date);
@@ -87,19 +76,7 @@ class LocalStore {
     await box.put(key, value);
   }
 
-  static Future<bool> removeSession({
-    required String classId,
-    required DateTime date,
-  }) async {
-    final box = await _ensureBox();
-    final k = _key(classId, date);
-    if (box.containsKey(k)) {
-      await box.delete(k);
-      return true;
-    }
-    return false;
-  }
-
+  /// Obtiene la sesión del día (o null)
   static Map<String, dynamic>? getSession(String classId, DateTime date) {
     if (!Hive.isBoxOpen(_boxName)) return null;
     final box = Hive.box(_boxName);
@@ -107,6 +84,7 @@ class LocalStore {
     return (v is Map) ? v.cast<String, dynamic>() : null;
   }
 
+  /// Resumen del día para reportes
   static Map<String, int> dailySummary(String classId, DateTime date) {
     final data = getSession(classId, date);
     if (data == null) return {'present': 0, 'late': 0, 'absent': 0, 'total': 0};
@@ -119,7 +97,7 @@ class LocalStore {
     return {'present': present, 'late': late, 'absent': absent, 'total': total};
   }
 
-  // ---------- PDF ----------
+  /// Exporta la sesión del día a PDF (compartir/guardar)
   static Future<void> exportTodayPdf(
     GroupClass groupClass,
     DateTime date,
@@ -128,84 +106,6 @@ class LocalStore {
     if (data == null) throw Exception('No hay lista guardada para hoy.');
     final recs = (data['records'] as List).cast<Map>();
 
-    final bytes = await _buildPdf(groupClass, date, recs);
-    await Printing.sharePdf(
-      bytes: bytes,
-      filename:
-          'asistencia_${LG.groupKeyOf(groupClass)}_${DateFormat('yyyyMMdd').format(date)}.pdf',
-    );
-  }
-
-  /// Fallback: si no hay local, lee Firestore en la ruta /teachers/{uid}/...
-  static Future<void> exportTodayPdfFallback(
-    GroupClass groupClass,
-    DateTime date,
-  ) async {
-    final local = getSession(LG.groupKeyOf(groupClass), date);
-    if (local != null) {
-      final recs = (local['records'] as List).cast<Map>();
-      final bytes = await _buildPdf(groupClass, date, recs);
-      await Printing.sharePdf(
-        bytes: bytes,
-        filename:
-            'asistencia_${LG.groupKeyOf(groupClass)}_${DateFormat('yyyyMMdd').format(date)}.pdf',
-      );
-      return;
-    }
-
-    final list = await AttendanceService.instance.listSessions(
-      groupId: LG.groupKeyOf(groupClass),
-      limit: 1,
-      dateFrom: date,
-      dateTo: date,
-    );
-    if (list.isEmpty) {
-      final ymd = DateFormat('yyyy-MM-dd').format(date);
-      throw Exception(
-        'No hay sesión guardada para $ymd ni en local ni en Firestore.',
-      );
-    }
-
-    final raw = list.first;
-    final remoteRecs = (raw['students'] as List?)?.cast<Map>() ?? const <Map>[];
-    final bytes = await _buildPdf(groupClass, date, remoteRecs);
-    await Printing.sharePdf(
-      bytes: bytes,
-      filename:
-          'asistencia_${LG.groupKeyOf(groupClass)}_${DateFormat('yyyyMMdd').format(date)}.pdf',
-    );
-  }
-
-  static Future<void> exportPdfFromRecords({
-    required GroupClass groupClass,
-    required DateTime date,
-    required List<Map<String, dynamic>> records,
-  }) async {
-    final recs =
-        records
-            .map(
-              (r) => {
-                'studentId':
-                    (r['studentId'] ?? r['matricula'] ?? '').toString(),
-                'name': (r['name'] ?? '').toString(),
-                'status': (r['status'] ?? 'none').toString(),
-              },
-            )
-            .toList();
-
-    final bytes = await _buildPdf(groupClass, date, recs);
-    await Printing.sharePdf(
-      bytes: bytes,
-      filename:
-          'asistencia_${LG.groupKeyOf(groupClass)}_${DateFormat('yyyyMMdd').format(date)}.pdf',
-    );
-  }
-
-  static Future<Uint8List> _buildPdf(
-    GroupClass groupClass,
-    DateTime date,
-    List<Map> recs,
-  ) async {
     final doc = pw.Document();
     final df = DateFormat("EEEE d 'de' MMMM 'de' yyyy", 'es_MX');
 
@@ -242,14 +142,14 @@ class LocalStore {
               ),
               pw.SizedBox(height: 12),
               pw.TableHelper.fromTextArray(
-                headers: const ['#', 'ID', 'Nombre', 'Estado'],
+                headers: ['#', 'ID', 'Nombre', 'Estado'],
                 data: List.generate(recs.length, (i) {
                   final r = recs[i];
                   return [
                     '${i + 1}',
-                    (r['studentId'] ?? '').toString(),
-                    (r['name'] ?? '').toString(),
-                    _statusText((r['status'] ?? 'none').toString()),
+                    r['studentId'],
+                    r['name'],
+                    _statusText(r['status']),
                   ];
                 }),
                 headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
@@ -263,10 +163,27 @@ class LocalStore {
                   3: pw.Alignment.center,
                 },
               ),
+              pw.SizedBox(height: 12),
+              () {
+                final s = dailySummary(LG.groupKeyOf(groupClass), date);
+                final avg =
+                    s['total'] == 0
+                        ? 0
+                        : ((s['present']! / s['total']!) * 100).round();
+                return pw.Text(
+                  'Resumen: Presentes ${s['present']}, Retardos ${s['late']}, Ausentes ${s['absent']}, '
+                  'Total ${s['total']} — Promedio $avg%',
+                );
+              }(),
             ],
       ),
     );
 
-    return Uint8List.fromList(await doc.save());
+    final bytes = await doc.save();
+    await Printing.sharePdf(
+      bytes: bytes,
+      filename:
+          'asistencia_${LG.groupKeyOf(groupClass)}_${DateFormat('yyyyMMdd').format(date)}.pdf',
+    );
   }
 }
