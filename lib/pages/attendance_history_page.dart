@@ -1,8 +1,9 @@
-import 'package:flutter/material.dart';
+// … imports …
+import 'edit_attendance_page.dart';
 import 'package:intl/intl.dart';
-
 import '../services/attendance_service.dart';
 import '../local_store.dart';
+import 'package:flutter/material.dart';
 
 class AttendanceHistoryPage extends StatefulWidget {
   const AttendanceHistoryPage({
@@ -24,7 +25,6 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
   final _rows = <Map<String, dynamic>>[];
   bool _loading = true;
 
-  // Rango por defecto = mes actual
   DateTimeRange _range = DateTimeRange(
     start: DateTime(DateTime.now().year, DateTime.now().month, 1),
     end: DateTime(DateTime.now().year, DateTime.now().month + 1, 0),
@@ -69,9 +69,8 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
       _rows.addAll(items);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo cargar el historial: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('No se pudo cargar el historial: $e')));
     } finally {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -85,7 +84,6 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
       );
       return;
     }
-
     final titulo = [
       'Historial de Asistencia',
       if (widget.subjectName != null) widget.subjectName!,
@@ -100,12 +98,12 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo exportar: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('No se pudo exportar: $e')));
     }
   }
 
+  // ===== Eliminar =====
   Future<void> _onDelete(Map<String, dynamic> row) async {
     final ok = await showDialog<bool>(
           context: context,
@@ -116,14 +114,8 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
               'Esta acción no se puede deshacer.',
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancelar'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Eliminar'),
-              ),
+              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+              FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Eliminar')),
             ],
           ),
         ) ??
@@ -137,22 +129,58 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
         docId: docId,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sesión eliminada')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sesión eliminada')));
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo eliminar: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('No se pudo eliminar: $e')));
     }
   }
 
-  void _onEdit(Map<String, dynamic> row) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Edición no implementada aún.')),
-    );
+  // ===== Editar =====
+  Future<void> _onEdit(Map<String, dynamic> row) async {
+    try {
+      // Traemos la sesión completa para editar (incluye records)
+      final dt = DateTime.tryParse((row['date'] ?? row['docId']).toString()) ?? DateTime.now();
+      final full = await AttendanceService.instance.getSessionByGroupAndDate(
+        groupId: widget.groupId,
+        date: dt,
+      );
+      if (full == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('No se encontró la sesión.')));
+        return;
+      }
+
+      final changed = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => EditAttendancePage(
+            groupId: widget.groupId,
+            docId: (full['docId'] ?? row['docId']).toString(),
+            subject: (full['subject'] ?? row['subject'] ?? '').toString(),
+            groupName: (full['groupName'] ?? row['groupName'] ?? '').toString(),
+            start: (full['start'] ?? row['start'] ?? '--:--').toString(),
+            end: (full['end'] ?? row['end'] ?? '--:--').toString(),
+            date: dt,
+            records: ((full['records'] as List?) ?? const [])
+                .map<Map<String, dynamic>>((e) =>
+                    e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
+                .toList(),
+          ),
+        ),
+      );
+
+      if (changed == true) {
+        await _load(); // recargar lista
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('No se pudo abrir la edición: $e')));
+    }
   }
 
   @override
@@ -165,12 +193,10 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
     final surfaceLow = Theme.of(context).colorScheme.surface;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Historial de asistencia'),
-      ),
+      appBar: AppBar(title: const Text('Historial de asistencia')),
       body: Column(
         children: [
-          // ======= Filtro a ancho completo + botón exportar debajo =======
+          // filtro de fechas ancho completo + botón exportar
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: Column(
@@ -180,8 +206,7 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
                   onTap: _pickRange,
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(12),
                       color: surfaceHigh,
@@ -190,12 +215,7 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
                       children: [
                         const Icon(Icons.date_range),
                         const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            periodLabel,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
+                        Expanded(child: Text(periodLabel, overflow: TextOverflow.ellipsis)),
                         const Icon(Icons.keyboard_arrow_down),
                       ],
                     ),
@@ -211,31 +231,23 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
             ),
           ),
           const SizedBox(height: 8),
-
-          // ======= LISTA =======
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _rows.isEmpty
                     ? const Center(child: Text('Sin registros'))
                     : ListView.separated(
-                        padding:
-                            const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                        separatorBuilder: (_, __) =>
-                            const SizedBox(height: 8),
+                        padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemCount: _rows.length,
                         itemBuilder: (_, i) {
                           final r = _rows[i];
-                          final dateStr =
-                              (r['date'] ?? r['docId'] ?? '').toString();
-                          final dt = DateTime.tryParse(dateStr) ??
-                              DateTime.now();
-                          final present =
-                              (r['present'] ?? r['presentCount'] ?? 0) as int;
+                          final dateStr = (r['date'] ?? r['docId'] ?? '').toString();
+                          final dt = DateTime.tryParse(dateStr) ?? DateTime.now();
+                          final present = (r['present'] ?? r['presentCount'] ?? 0) as int;
                           final late = (r['late'] ?? 0) as int;
                           final absent = (r['absent'] ?? 0) as int;
-                          final total =
-                              (r['total'] ?? (present + late + absent)) as int;
+                          final total = (r['total'] ?? (present + late + absent)) as int;
 
                           return Material(
                             color: surfaceLow,
@@ -244,17 +256,11 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(16),
                               ),
-                              title: Text(
-                                dfHuman.format(dt),
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium,
-                              ),
+                              title: Text(dfHuman.format(dt),
+                                  style: Theme.of(context).textTheme.titleMedium),
                               subtitle: Padding(
                                 padding: const EdgeInsets.only(top: 6),
-                                child: Text(
-                                  'P: $present  •  R: $late  •  A: $absent  •  Total: $total',
-                                ),
+                                child: Text('P: $present  •  R: $late  •  A: $absent  •  Total: $total'),
                               ),
                               trailing: Wrap(
                                 spacing: 6,
@@ -269,36 +275,20 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
                                     icon: const Icon(Icons.delete_outline),
                                     onPressed: () => _onDelete(r),
                                   ),
-                                  // PDF por día (usa exportSessionPdfSmart: local -> cloud)
                                   IconButton(
                                     tooltip: 'PDF (este día)',
-                                    icon: const Icon(
-                                      Icons.picture_as_pdf_outlined,
-                                    ),
+                                    icon: const Icon(Icons.picture_as_pdf_outlined),
                                     onPressed: () async {
-                                      final dt = DateTime.tryParse(
-                                            (r['date'] ?? r['id']).toString(),
-                                          ) ??
-                                          DateTime.now();
                                       try {
                                         await LocalStore.exportSessionPdfSmart(
                                           groupId: widget.groupId,
-                                          date: DateTime(
-                                            dt.year,
-                                            dt.month,
-                                            dt.day,
-                                          ),
+                                          date: dt,
                                           subject: widget.subjectName,
                                         );
                                       } catch (e) {
                                         if (!mounted) return;
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              'No se pudo exportar: $e',
-                                            ),
-                                          ),
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(content: Text('No se pudo exportar: $e')),
                                         );
                                       }
                                     },
