@@ -183,56 +183,57 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Historial de asistencia'),
-        actions: [
-          IconButton(
-            tooltip: 'Exportar PDF (rango filtrado)',
-            icon: const Icon(Icons.picture_as_pdf_outlined),
-            onPressed: _exportRangePdf,
-          ),
-        ],
+        //actions: [
+          //IconButton(
+            //tooltip: 'Exportar PDF (rango filtrado)',
+            //icon: const Icon(Icons.picture_as_pdf_outlined),
+            //onPressed: _exportRangePdf,
+          //),
+        //],
       ),
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: InkWell(
-                    onTap: _pickRange,
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        color: surfaceHigh,
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.date_range),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              periodLabel,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const Icon(Icons.keyboard_arrow_down),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton.icon(
-                  onPressed: _exportRangePdf,
-                  icon: const Icon(Icons.picture_as_pdf_outlined),
-                  label: const Text('Exportar PDF (filtro actual)'),
-                ),
-              ],
-            ),
+  padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+  child: Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      // Filtro de rango de fechas (ahora ancho completo)
+      InkWell(
+        onTap: _pickRange,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: surfaceHigh,
           ),
+          child: Row(
+            children: [
+              const Icon(Icons.date_range),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  periodLabel,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const Icon(Icons.keyboard_arrow_down),
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 12),
+      // Botón exportar PDF debajo
+      ElevatedButton.icon(
+        onPressed: _exportRangePdf,
+        icon: const Icon(Icons.picture_as_pdf_outlined),
+        label: const Text('Exportar PDF (filtro actual)'),
+      ),
+    ],
+  ),
+),
+
           const SizedBox(height: 8),
           Expanded(
             child: _loading
