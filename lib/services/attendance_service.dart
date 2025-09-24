@@ -1,131 +1,117 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:intl/intl.dart';
 
 class AttendanceService {
   AttendanceService._();
   static final instance = AttendanceService._();
 
-  final _auth = FirebaseAuth.instance;
-  final _fs = FirebaseFirestore.instance;
+  FirebaseFirestore get _db => FirebaseFirestore.instance;
+  String get _uid => FirebaseAuth.instance.currentUser!.uid;
 
-  String get _uid {
-    final u = _auth.currentUser;
-    if (u == null) {
-      throw Exception('No hay usuario autenticado.');
-    }
-    return u.uid;
+  /// Guarda sesión (ya lo tenías)
+  Future<void> saveSessionToFirestore({
+    required String groupId,
+    required String subject,
+    required String groupName,
+    required String start,
+    required String end,
+    required DateTime date,
+    required List<Map<String, dynamic>> records,
+  }) async {
+    final id = _dateKey(date); // yyyy-MM-dd
+    await _db
+        .collection('teachers')
+        .doc(_uid)
+        .collection('attendance')
+        .doc(groupId)
+        .collection('sessions')
+        .doc(id)
+        .set({
+          'teacherUid': _uid,
+          'groupId': groupId,
+          'subject': subject,
+          'groupName': groupName,
+          'start': start,
+          'end': end,
+          'date': id,
+          'records': records,
+          'present': records.where((r) => r['status'] == 'present').length,
+          'late': records.where((r) => r['status'] == 'late').length,
+          'absent': records.where((r) => r['status'] == 'absent').length,
+          'total': records.length,
+          'savedAt': DateTime.now().toIso8601String(),
+        }, SetOptions(merge: true));
   }
 
-  /// Colección: teachers/{uid}/attendance/{groupId}/sessions
-  CollectionReference<Map<String, dynamic>> _sessionsCol(String groupId) {
-    return _fs
+  /// Lista sesiones (ya lo tenías)
+  Future<List<Map<String, dynamic>>> listSessions({
+    required String groupId,
+    int limit = 100,
+    DateTime? dateFrom,
+    DateTime? dateTo,
+  }) async {
+    CollectionReference col = _db
         .collection('teachers')
         .doc(_uid)
         .collection('attendance')
         .doc(groupId)
         .collection('sessions');
-  }
 
-  /// ID por día (igual a tu consola): yyyy-MM-dd
-  String _docIdFromDate(DateTime date) =>
-      DateFormat('yyyy-MM-dd').format(date);
-
-  /// Crear/actualizar sesión del día
-  Future<void> saveSessionToFirestore({
-    required String groupId,
-    required String subject,
-    required String groupName,
-    required String start, // "HH:mm"
-    required String end,   // "HH:mm"
-    required DateTime date,
-    required List<Map<String, dynamic>> records, // [{studentId,name,status}]
-  }) async {
-    final col = _sessionsCol(groupId);
-    final docId = _docIdFromDate(date);
-
-    int present = 0, late = 0, absent = 0;
-    for (final r in records) {
-      final s = (r['status'] ?? '').toString();
-      if (s == 'present') present++;
-      else if (s == 'late') late++;
-      else if (s == 'absent') absent++;
-    }
-    final total = records.length;
-
-    final payload = {
-      'teacherUid': _uid,
-      'groupId': groupId,
-      'subject': subject,
-      'groupName': groupName,
-      'start': start,
-      'end': end,
-      'date': DateFormat('yyyy-MM-dd').format(date),
-      'dateTs': Timestamp.fromDate(DateTime(date.year, date.month, date.day)),
-      'present': present,
-      'late': late,
-      'absent': absent,
-      'total': total,
-      'records': records,
-      'savedAt': FieldValue.serverTimestamp(),
-    };
-
-    await col.doc(docId).set(payload, SetOptions(merge: true));
-  }
-
-  /// Lista sesiones (query por un solo campo: dateTs → sin índice compuesto)
-  Future<List<Map<String, dynamic>>> listSessions({
-    required String groupId,
-    DateTime? dateFrom,
-    DateTime? dateTo,
-    int limit = 100,
-  }) async {
-    Query<Map<String, dynamic>> q =
-        _sessionsCol(groupId).orderBy('dateTs', descending: true);
-
+    Query q = col;
+    // Como el ID del doc es yyyy-MM-dd, podemos filtrar por rango con where(FieldPath.documentId)
     if (dateFrom != null) {
       q = q.where(
-        'dateTs',
-        isGreaterThanOrEqualTo: Timestamp.fromDate(
-          DateTime(dateFrom.year, dateFrom.month, dateFrom.day),
-        ),
+        FieldPath.documentId,
+        isGreaterThanOrEqualTo: _dateKey(dateFrom),
       );
     }
     if (dateTo != null) {
-      final toEnd =
-          DateTime(dateTo.year, dateTo.month, dateTo.day, 23, 59, 59);
-      q = q.where('dateTs', isLessThanOrEqualTo: Timestamp.fromDate(toEnd));
+      q = q.where(FieldPath.documentId, isLessThanOrEqualTo: _dateKey(dateTo));
     }
+    q = q.orderBy(FieldPath.documentId, descending: true).limit(limit);
 
-    q = q.limit(limit);
     final snap = await q.get();
-    // Estandarizamos la clave del id del doc como 'docId'
-    return snap.docs.map((d) => {'docId': d.id, ...d.data()}).toList();
+    return snap.docs
+        .map((d) => {'docId': d.id, ...d.data() as Map<String, dynamic>})
+        .toList();
   }
 
-  /// Leer una sesión específica
-  Future<Map<String, dynamic>?> getSession({
+  /// NUEVO: trae una sesión específica (para generar PDF cloud→local)
+  Future<Map<String, dynamic>?> getSessionByGroupAndDate({
     required String groupId,
     required DateTime date,
   }) async {
-    final d = await _sessionsCol(groupId).doc(_docIdFromDate(date)).get();
-    if (!d.exists) return null;
-    return {'docId': d.id, ...?d.data()};
+    final id = _dateKey(date);
+    final doc =
+        await _db
+            .collection('teachers')
+            .doc(_uid)
+            .collection('attendance')
+            .doc(groupId)
+            .collection('sessions')
+            .doc(id)
+            .get();
+
+    if (!doc.exists) return null;
+    final data = doc.data() as Map<String, dynamic>;
+    return {'docId': doc.id, ...data};
   }
 
-  /// Eliminar por fecha
-  Future<void> deleteSession({
-    required String groupId,
-    required DateTime date,
-  }) async {
-    await _sessionsCol(groupId).doc(_docIdFromDate(date)).delete();
-  }
-
-  /// ✅ NUEVO: Eliminar por docId (lo que pedía tu pantalla)
+  /// (opcional) borrar por id de doc
   Future<void> deleteSessionById({
     required String groupId,
     required String docId,
   }) async {
-    await _sessionsCol(groupId).doc(docId).delete();
+    await _db
+        .collection('teachers')
+        .doc(_uid)
+        .collection('attendance')
+        .doc(groupId)
+        .collection('sessions')
+        .doc(docId)
+        .delete();
   }
+
+  String _dateKey(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 }

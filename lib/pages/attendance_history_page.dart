@@ -24,6 +24,7 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
   final _rows = <Map<String, dynamic>>[];
   bool _loading = true;
 
+  // Rango por defecto = mes actual
   DateTimeRange _range = DateTimeRange(
     start: DateTime(DateTime.now().year, DateTime.now().month, 1),
     end: DateTime(DateTime.now().year, DateTime.now().month + 1, 0),
@@ -65,7 +66,6 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
         dateFrom: _range.start,
         dateTo: _range.end,
       );
-
       _rows.addAll(items);
     } catch (e) {
       if (!mounted) return;
@@ -85,6 +85,7 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
       );
       return;
     }
+
     final titulo = [
       'Historial de Asistencia',
       if (widget.subjectName != null) widget.subjectName!,
@@ -96,21 +97,6 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
         to: _range.end,
         rows: List<Map<String, dynamic>>.from(_rows),
         titulo: titulo.isEmpty ? null : titulo,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo exportar: $e')),
-      );
-    }
-  }
-
-  Future<void> _exportSingleDayPdf(DateTime day) async {
-    try {
-      await LocalStore.exportSessionPdfByGroup(
-        groupId: widget.groupId,
-        date: DateTime(day.year, day.month, day.day),
-        subject: widget.subjectName,
       );
     } catch (e) {
       if (!mounted) return;
@@ -165,9 +151,7 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
 
   void _onEdit(Map<String, dynamic> row) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Edición no implementada aún.'),
-      ),
+      const SnackBar(content: Text('Edición no implementada aún.')),
     );
   }
 
@@ -183,66 +167,62 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Historial de asistencia'),
-        //actions: [
-          //IconButton(
-            //tooltip: 'Exportar PDF (rango filtrado)',
-            //icon: const Icon(Icons.picture_as_pdf_outlined),
-            //onPressed: _exportRangePdf,
-          //),
-        //],
       ),
       body: Column(
         children: [
+          // ======= Filtro a ancho completo + botón exportar debajo =======
           Padding(
-  padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-  child: Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      // Filtro de rango de fechas (ahora ancho completo)
-      InkWell(
-        onTap: _pickRange,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            color: surfaceHigh,
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.date_range),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  periodLabel,
-                  overflow: TextOverflow.ellipsis,
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                InkWell(
+                  onTap: _pickRange,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      color: surfaceHigh,
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.date_range),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            periodLabel,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Icon(Icons.keyboard_arrow_down),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-              const Icon(Icons.keyboard_arrow_down),
-            ],
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: _exportRangePdf,
+                  icon: const Icon(Icons.picture_as_pdf_outlined),
+                  label: const Text('Exportar PDF (filtro actual)'),
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
-      const SizedBox(height: 12),
-      // Botón exportar PDF debajo
-      ElevatedButton.icon(
-        onPressed: _exportRangePdf,
-        icon: const Icon(Icons.picture_as_pdf_outlined),
-        label: const Text('Exportar PDF (filtro actual)'),
-      ),
-    ],
-  ),
-),
-
           const SizedBox(height: 8),
+
+          // ======= LISTA =======
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _rows.isEmpty
                     ? const Center(child: Text('Sin registros'))
                     : ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        padding:
+                            const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                        separatorBuilder: (_, __) =>
+                            const SizedBox(height: 8),
                         itemCount: _rows.length,
                         itemBuilder: (_, i) {
                           final r = _rows[i];
@@ -289,11 +269,39 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
                                     icon: const Icon(Icons.delete_outline),
                                     onPressed: () => _onDelete(r),
                                   ),
+                                  // PDF por día (usa exportSessionPdfSmart: local -> cloud)
                                   IconButton(
                                     tooltip: 'PDF (este día)',
                                     icon: const Icon(
-                                        Icons.picture_as_pdf_outlined),
-                                    onPressed: () => _exportSingleDayPdf(dt),
+                                      Icons.picture_as_pdf_outlined,
+                                    ),
+                                    onPressed: () async {
+                                      final dt = DateTime.tryParse(
+                                            (r['date'] ?? r['id']).toString(),
+                                          ) ??
+                                          DateTime.now();
+                                      try {
+                                        await LocalStore.exportSessionPdfSmart(
+                                          groupId: widget.groupId,
+                                          date: DateTime(
+                                            dt.year,
+                                            dt.month,
+                                            dt.day,
+                                          ),
+                                          subject: widget.subjectName,
+                                        );
+                                      } catch (e) {
+                                        if (!mounted) return;
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'No se pudo exportar: $e',
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    },
                                   ),
                                 ],
                               ),
