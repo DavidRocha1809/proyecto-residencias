@@ -3,18 +3,24 @@ import 'package:intl/intl.dart';
 import '../local_groups.dart' as LG;
 import '../services/attendance_service.dart';
 import '../models.dart';
+import '../local_store.dart';
+
+enum ReportPeriod { daily, weekly, monthly }
 
 class ReportsPage extends StatefulWidget {
+  static const route = '/reports'; // 👈 ruta
+
   const ReportsPage({super.key, this.initialGroup});
   final GroupClass? initialGroup;
-
-  static const route = '/reports';
 
   @override
   State<ReportsPage> createState() => _ReportsPageState();
 }
 
 class _ReportsPageState extends State<ReportsPage> {
+  ReportPeriod _period = ReportPeriod.daily;
+  DateTime _anchor = DateTime.now();
+
   DateTimeRange? _range;
   String? _selectedSubject;
 
@@ -25,28 +31,47 @@ class _ReportsPageState extends State<ReportsPage> {
   @override
   void initState() {
     super.initState();
-    // Si viene un grupo desde la tarjeta, úsalo como "semilla"
     if (widget.initialGroup != null) {
       _allGroups.add(widget.initialGroup!);
-      _selectedSubject = null; // o widget.initialGroup!.subject;
+      _selectedSubject = null;
     }
+    _recomputeRange();
     _load();
   }
 
-  Future<void> _pickRange() async {
-    final now = DateTime.now();
-    final res = await showDateRangePicker(
+  void _recomputeRange() {
+    final d = DateTime(_anchor.year, _anchor.month, _anchor.day);
+    switch (_period) {
+      case ReportPeriod.daily:
+        _range = DateTimeRange(start: d, end: d);
+        break;
+      case ReportPeriod.weekly:
+        final start = d.subtract(Duration(days: d.weekday - 1)); // lunes
+        final end = start.add(const Duration(days: 6)); // domingo
+        _range = DateTimeRange(start: start, end: end);
+        break;
+      case ReportPeriod.monthly:
+        final start = DateTime(d.year, d.month, 1);
+        final end = DateTime(d.year, d.month + 1, 0);
+        _range = DateTimeRange(start: start, end: end);
+        break;
+    }
+  }
+
+  Future<void> _pickAnchorDate() async {
+    final res = await showDatePicker(
       context: context,
-      firstDate: DateTime(now.year - 1, 1, 1),
-      lastDate: DateTime(now.year + 1, 12, 31),
-      initialDateRange: _range,
+      initialDate: _anchor,
+      firstDate: DateTime(DateTime.now().year - 1, 1, 1),
+      lastDate: DateTime(DateTime.now().year + 1, 12, 31),
       locale: const Locale('es', 'MX'),
     );
-    if (!mounted) return;
-    if (res != null) {
-      setState(() => _range = res);
-      await _load();
-    }
+    if (res == null) return;
+    setState(() {
+      _anchor = res;
+      _recomputeRange();
+    });
+    await _load();
   }
 
   Future<void> _load() async {
@@ -56,7 +81,6 @@ class _ReportsPageState extends State<ReportsPage> {
     });
 
     try {
-      // En producción, aquí podrías cargar TODOS los grupos del docente si _allGroups está vacío
       final List<GroupClass> list =
           _selectedSubject == null
               ? _allGroups
@@ -67,8 +91,8 @@ class _ReportsPageState extends State<ReportsPage> {
         final items = await AttendanceService.instance.listSessions(
           groupId: gid,
           limit: 500,
-          dateFrom: _range?.start, // ✅ ahora existe
-          dateTo: _range?.end, // ✅ ahora existe
+          dateFrom: _range?.start,
+          dateTo: _range?.end,
         );
         _rows.addAll(items);
       }
@@ -79,51 +103,138 @@ class _ReportsPageState extends State<ReportsPage> {
       );
     } finally {
       if (!mounted) return;
-      setState(() => _loading = false); // 👈 sin "return" aquí
+      setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _exportPdf() async {
+    try {
+      if (_rows.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No hay registros para exportar')),
+        );
+        return;
+      }
+      final title = switch (_period) {
+        ReportPeriod.daily => 'Reporte Diario',
+        ReportPeriod.weekly => 'Reporte Semanal',
+        ReportPeriod.monthly => 'Reporte Mensual',
+      };
+      await LocalStore.exportPeriodPdf(
+        from: _range!.start,
+        to: _range!.end,
+        rows: List<Map<String, dynamic>>.from(_rows),
+        titulo: title,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo exportar: $e')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final df = DateFormat('yyyy-MM-dd');
+    final dfHuman = DateFormat("d 'de' MMMM 'de' yyyy", 'es_MX');
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Reportes'),
         actions: [
           IconButton(
-            tooltip: 'Rango de fechas',
+            tooltip: 'Exportar PDF (rango actual)',
+            icon: const Icon(Icons.picture_as_pdf_outlined),
+            onPressed: _exportPdf,
+          ),
+          IconButton(
+            tooltip: 'Cambiar fecha ancla',
             icon: const Icon(Icons.date_range),
-            onPressed: _pickRange,
+            onPressed: _pickAnchorDate,
           ),
         ],
       ),
-      body:
-          _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _rows.isEmpty
-              ? const Center(child: Text('Sin registros'))
-              : ListView.separated(
-                itemCount: _rows.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (_, i) {
-                  final r = _rows[i];
-                  final dt =
-                      DateTime.tryParse(
-                        (r['date'] ?? r['id']) as String? ?? '',
-                      ) ??
-                      DateTime.now();
-                  final subj = (r['subject'] ?? '').toString();
-                  final gname = (r['groupName'] ?? '').toString();
-                  final present = r['present'] ?? r['presentCount'] ?? '';
-                  return ListTile(
-                    title: Text('$subj — $gname'),
-                    subtitle: Text(
-                      'Fecha: ${df.format(dt)}  •  Presentes: $present',
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: Row(
+              children: [
+                SegmentedButton<ReportPeriod>(
+                  segments: const [
+                    ButtonSegment(
+                      value: ReportPeriod.daily,
+                      label: Text('Diario'),
+                      icon: Icon(Icons.today_outlined),
                     ),
-                  );
-                },
-              ),
+                    ButtonSegment(
+                      value: ReportPeriod.weekly,
+                      label: Text('Semanal'),
+                      icon: Icon(Icons.calendar_view_week),
+                    ),
+                    ButtonSegment(
+                      value: ReportPeriod.monthly,
+                      label: Text('Mensual'),
+                      icon: Icon(Icons.calendar_month_outlined),
+                    ),
+                  ],
+                  selected: {_period},
+                  onSelectionChanged: (s) async {
+                    setState(() {
+                      _period = s.first;
+                      _recomputeRange();
+                    });
+                    await _load();
+                  },
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _range == null
+                        ? ''
+                        : 'Periodo: ${dfHuman.format(_range!.start)} — ${dfHuman.format(_range!.end)}',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child:
+                _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _rows.isEmpty
+                    ? const Center(child: Text('Sin registros'))
+                    : ListView.separated(
+                      itemCount: _rows.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (_, i) {
+                        final r = _rows[i];
+                        final dt =
+                            DateTime.tryParse(
+                              (r['date'] ?? r['id']) as String? ?? '',
+                            ) ??
+                            DateTime.now();
+                        final subj = (r['subject'] ?? '').toString();
+                        final gname = (r['groupName'] ?? '').toString();
+                        final present = r['present'] ?? r['presentCount'] ?? 0;
+                        final late = r['late'] ?? 0;
+                        final absent = r['absent'] ?? 0;
+                        final total = r['total'] ?? (present + late + absent);
+
+                        return ListTile(
+                          title: Text('$subj — $gname'),
+                          subtitle: Text(
+                            'Fecha: ${df.format(dt)}  •  P: $present  R: $late  A: $absent  •  Total: $total',
+                          ),
+                        );
+                      },
+                    ),
+          ),
+        ],
+      ),
     );
   }
 }

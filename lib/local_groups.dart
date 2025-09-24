@@ -3,33 +3,40 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import 'models.dart';
 
-/// ==== Helpers de clave de grupo ====
-String groupKeyFromParts(String groupName, String turno, String dia) {
-  final s = '$groupName-$turno-$dia'
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
-      .replaceAll(RegExp(r'-+'), '-');
-  return s.replaceAll(RegExp(r'^-|-$'), '');
+/// Llave única de grupo a partir de (grupo + turno + día)
+String groupKeyFromParts(String groupName, String? turno, String? dia) {
+  final t = (turno ?? '').trim();
+  final d = (dia ?? '').trim();
+  return '$groupName|$t|$d';
 }
 
+/// Llave única de grupo a partir de un GroupClass
 String groupKeyOf(GroupClass g) =>
-    groupKeyFromParts(g.groupName, g.turno ?? 'NA', g.dia ?? 'NA');
+    groupKeyFromParts(g.groupName, g.turno, g.dia);
 
-/// ===================================================================
-/// Almacén LOCAL (teléfono) para grupos y alumnos importados por CSV.
-/// Guarda todo en el box Hive `local_groups`.
-/// ===================================================================
 class LocalGroups {
-  static const _boxName = 'local_groups';
+  // Nombres de boxes
+  static const String _boxGroups = 'groups'; // grupos
+  // alumnos se guardan en boxes por grupo: 'students::<groupId>'
 
-  static Future<Box> _ensureBox() async {
-    if (!Hive.isBoxOpen(_boxName)) {
-      await Hive.openBox(_boxName);
+  /// Asegura que el box de grupos esté abierto
+  static Future<Box> _ensureGroupsBox() async {
+    if (!Hive.isBoxOpen(_boxGroups)) {
+      await Hive.openBox(_boxGroups);
     }
-    return Hive.box(_boxName);
+    return Hive.box(_boxGroups);
   }
 
-  /// Guarda/actualiza metadatos del grupo (SOLO metadatos)
+  /// Asegura que el box de alumnos para un groupId esté abierto
+  static Future<Box> _ensureStudentsBox(String groupId) async {
+    final name = 'students::$groupId';
+    if (!Hive.isBoxOpen(name)) {
+      await Hive.openBox(name);
+    }
+    return Hive.box(name);
+  }
+
+  /// Inserta/actualiza un grupo
   static Future<void> upsertGroup({
     required String groupId,
     required String groupName,
@@ -39,128 +46,89 @@ class LocalGroups {
     String? start,
     String? end,
   }) async {
-    final box = await _ensureBox();
-    await box.put('group::$groupId', {
+    final box = await _ensureGroupsBox();
+    await box.put(groupId, {
       'groupId': groupId,
       'groupName': groupName,
       'subject': subject,
       'turno': turno,
       'dia': dia,
-      if (start != null) 'start': start,
-      if (end != null) 'end': end,
+      'start': start, // HH:mm
+      'end': end, // HH:mm
     });
   }
 
-  /// Inserta/actualiza el listado de alumnos del grupo
+  /// Retorna todos los grupos como `GroupClass`
+  static Future<List<GroupClass>> listGroups() async {
+    final box = await _ensureGroupsBox();
+    final List<GroupClass> out = [];
+    for (final key in box.keys) {
+      final m = box.get(key);
+      if (m is Map) {
+        final data = m.cast<String, dynamic>();
+        // Parseo de horario HH:mm -> TimeOfDay
+        TimeOfDay _parseTime(String? s) {
+          if (s == null || s.isEmpty)
+            return const TimeOfDay(hour: 0, minute: 0);
+          final p = s.split(':');
+          final h = int.tryParse(p[0]) ?? 0;
+          final min = int.tryParse(p[1]) ?? 0;
+          return TimeOfDay(hour: h, minute: min);
+        }
+
+        out.add(
+          GroupClass(
+            groupName: (data['groupName'] ?? '').toString(),
+            subject: (data['subject'] ?? '').toString(),
+            turno: (data['turno'] ?? '').toString(),
+            dia: (data['dia'] ?? '').toString(),
+            start: _parseTime(data['start']?.toString()),
+            end: _parseTime(data['end']?.toString()),
+            // Importante: aquí NO cargamos alumnos; se cargan aparte por groupId
+            students: const <Student>[],
+          ),
+        );
+      }
+    }
+    return out;
+  }
+
+  /// Guarda (inserta/actualiza) alumnos en bloque para un grupo.
+  /// Espera objetos tipo: { 'studentId': 'xxx', 'name': '...' }
   static Future<void> upsertStudentsBulk({
     required String groupId,
     required List<Map<String, dynamic>> students,
   }) async {
-    final box = await _ensureBox();
-    final norm =
-        students
-            .map(
-              (s) => {
-                'studentId':
-                    (s['studentId'] ?? s['matricula'] ?? '').toString().trim(),
-                'name': (s['name'] ?? '').toString(),
-                if (s['n'] != null) 'n': s['n'],
-              },
-            )
-            .where((m) => (m['studentId'] as String).isNotEmpty)
-            .toList();
-    await box.put('students::$groupId', norm);
+    final box = await _ensureStudentsBox(groupId);
+
+    // Guardamos por clave studentId para deduplicar
+    for (final s in students) {
+      final sid = (s['studentId'] ?? '').toString().trim();
+      if (sid.isEmpty) continue;
+      final name = (s['name'] ?? '').toString().trim();
+      await box.put(sid, {'id': sid, 'name': name});
+    }
   }
 
-  /// Lista grupos guardados localmente (como `GroupClass` sin alumnos)
-  static Future<List<GroupClass>> listGroups() async {
-    final box = await _ensureBox();
-    final keys =
-        box.keys.where((k) => k.toString().startsWith('group::')).toList();
-
-    TimeOfDay _parseTime(dynamic s) {
-      if (s is String) {
-        final p = s.split(':');
-        if (p.length >= 2) {
-          final h = int.tryParse(p[0]) ?? 0;
-          final m = int.tryParse(p[1]) ?? 0;
-          return TimeOfDay(hour: h, minute: m);
-        }
-      }
-      return const TimeOfDay(hour: 0, minute: 0);
-    }
-
-    final List<GroupClass> res = [];
-    for (final k in keys) {
-      final m = (box.get(k) as Map).cast<String, dynamic>();
-      res.add(
-        GroupClass(
-          groupName: m['groupName'] ?? '',
-          subject: m['subject'] ?? '',
-          start: _parseTime(m['start']),
-          end: _parseTime(m['end']),
-          students: const [], // se cargan al abrir la clase
-          turno: m['turno'],
-          dia: m['dia'],
-        ),
-      );
-    }
-    return res;
-  }
-
-  /// Regresa alumnos del grupo desde el almacenamiento local
-  static Future<List<Student>> getStudents({required String groupId}) async {
-    final box = await _ensureBox();
-    final list = (box.get('students::$groupId') as List?) ?? const [];
-    final docs = list.cast<Map>();
-
-    // Ordena por 'n' si existe, si no por nombre
-    docs.sort((a, b) {
-      final an = a['n'];
-      final bn = b['n'];
-      if (an is int && bn is int) return an.compareTo(bn);
-      final aname = (a['name'] ?? '').toString();
-      final bname = (b['name'] ?? '').toString();
-      return aname.compareTo(bname);
-    });
-
-    return docs
-        .map(
-          (m) => Student(
-            id: (m['studentId'] ?? '').toString(),
-            name: (m['name'] ?? '').toString(),
+  /// Lista alumnos de un grupo como `List<Student>` (para AttendancePage)
+  static Future<List<Student>> listStudents({required String groupId}) async {
+    final box = await _ensureStudentsBox(groupId);
+    final List<Student> out = [];
+    for (final key in box.keys) {
+      final m = box.get(key);
+      if (m is Map) {
+        final data = m.cast<String, dynamic>();
+        out.add(
+          Student(
+            id: (data['id'] ?? '').toString(),
+            name: (data['name'] ?? '').toString(),
+            status: AttendanceStatus.none, // la pantalla lo ajusta a 'present'
           ),
-        )
-        .toList();
+        );
+      }
+    }
+    // Orden por nombre (opcional)
+    out.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return out;
   }
 }
-
-/// ===== Wrappers top-level por si llamas con alias `as LG` =====
-
-Future<void> upsertGroup({
-  required String groupId,
-  required String groupName,
-  required String subject,
-  required String turno,
-  required String dia,
-  String? start,
-  String? end,
-}) => LocalGroups.upsertGroup(
-  groupId: groupId,
-  groupName: groupName,
-  subject: subject,
-  turno: turno,
-  dia: dia,
-  start: start,
-  end: end,
-);
-
-Future<void> upsertStudentsBulk({
-  required String groupId,
-  required List<Map<String, dynamic>> students,
-}) => LocalGroups.upsertStudentsBulk(groupId: groupId, students: students);
-
-Future<List<GroupClass>> listGroups() => LocalGroups.listGroups();
-
-Future<List<Student>> getStudents(String groupId) =>
-    LocalGroups.getStudents(groupId: groupId);

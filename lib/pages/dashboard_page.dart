@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models.dart';
 import '../local_groups.dart' as LG; // alias helpers + storage local
@@ -249,12 +251,15 @@ class _DashboardPageState extends State<DashboardPage> {
             icon: const Icon(Icons.upload_file),
             onPressed: () => _importGroupsAndStudentsFromCsv(context),
           ),
-          Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: FilledButton.tonal(
-              onPressed: () => Navigator.popUntil(context, (r) => r.isFirst),
-              child: const Text('Salir'),
-            ),
+          IconButton(
+            tooltip: 'Salir',
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              const storage = FlutterSecureStorage();
+              await storage.delete(key: 'auth_email');
+              await storage.delete(key: 'auth_password');
+              await FirebaseAuth.instance.signOut();
+            },
           ),
         ],
       ),
@@ -404,7 +409,7 @@ class _GroupMergedCard extends StatelessWidget {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => SessionsPage(groupClass: main),
+                          builder: (_) => SessionsPage(groups: [main]),
                         ),
                       );
                     },

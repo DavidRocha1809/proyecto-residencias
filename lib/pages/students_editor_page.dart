@@ -21,8 +21,8 @@ class _StudentsEditorPageState extends State<StudentsEditorPage> {
 
   String get _groupId => LG.groupKeyFromParts(
     widget.groupClass.groupName,
-    widget.groupClass.turno ?? 'NA',
-    widget.groupClass.dia ?? 'NA',
+    widget.groupClass.turno,
+    widget.groupClass.dia,
   );
 
   @override
@@ -33,13 +33,18 @@ class _StudentsEditorPageState extends State<StudentsEditorPage> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final students = await LG.LocalGroups.getStudents(groupId: _groupId);
+
+    // 👇 CAMBIO: listStudents en lugar de getStudents
+    final students = await LG.LocalGroups.listStudents(groupId: _groupId);
+
     // Asegura dedupe y orden
     final seen = <String>{};
     final clean =
         students.where((s) => seen.add(s.id)).toList()
           ..sort((a, b) => a.name.compareTo(b.name));
+
     _rows = clean.map((s) => _EditableStudent(id: s.id, name: s.name)).toList();
+
     if (!mounted) return;
     setState(() => _loading = false);
   }
@@ -52,15 +57,17 @@ class _StudentsEditorPageState extends State<StudentsEditorPage> {
       if (id.isEmpty) continue;
       byId[id] = {'studentId': id, 'name': r.name.trim()};
     }
+
     await LG.LocalGroups.upsertStudentsBulk(
       groupId: _groupId,
       students: byId.values.toList(),
     );
+
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Lista guardada ✅')));
-    Navigator.pop(context); // volvemos al dashboard
+    Navigator.pop(context); // volver al dashboard
   }
 
   Future<void> _importCsvReplace() async {
@@ -162,9 +169,7 @@ class _StudentsEditorPageState extends State<StudentsEditorPage> {
   }
 
   void _addEmpty() {
-    setState(() {
-      _rows.add(_EditableStudent(id: '', name: ''));
-    });
+    setState(() => _rows.add(_EditableStudent(id: '', name: '')));
   }
 
   @override
@@ -214,6 +219,8 @@ class _StudentsEditorPageState extends State<StudentsEditorPage> {
                   Expanded(
                     child: ListView.separated(
                       padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                      itemCount: _rows.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
                       itemBuilder: (_, i) {
                         final r = _rows[i];
                         return Card(
@@ -258,8 +265,6 @@ class _StudentsEditorPageState extends State<StudentsEditorPage> {
                           ),
                         );
                       },
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
-                      itemCount: _rows.length,
                     ),
                   ),
                 ],

@@ -33,6 +33,7 @@ dependencies:
   flutter_localization: 
   intl: ^0.19.0
   pdf: ^3.11.0
+  flutter_secure_storage: ^9.0.0
   printing: ^5.13.4
   firebase_core: ^3.4.0
   cloud_firestore: ^5.4.0

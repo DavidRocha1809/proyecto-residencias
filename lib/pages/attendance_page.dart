@@ -2,18 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models.dart';
+import '../local_groups.dart' as LG;
 import '../local_store.dart';
 import '../services/attendance_service.dart';
-import '../local_groups.dart' as lg; // alias minúscula
 
 class AttendancePage extends StatefulWidget {
   static const route = '/attendance';
   final GroupClass groupClass;
-
+  final DateTime initialDate;
   const AttendancePage({
     super.key,
     required this.groupClass,
-    required DateTime initialDate, // (si lo pasas desde el Dashboard)
+    required this.initialDate,
   });
 
   @override
@@ -21,377 +21,434 @@ class AttendancePage extends StatefulWidget {
 }
 
 class _AttendancePageState extends State<AttendancePage> {
-  String search = '';
-  bool _loading = true;
-
-  bool _loadingSession = false;
-  bool _hasExisting = false;
-
   DateTime _date = DateTime.now();
-
   List<Student> _students = [];
-
-  int get present =>
-      _students.where((s) => s.status == AttendanceStatus.present).length;
-  int get late =>
-      _students.where((s) => s.status == AttendanceStatus.late).length;
-  int get absent =>
-      _students.where((s) => s.status == AttendanceStatus.absent).length;
-  int get total => _students.length;
+  bool _loading = true;
+  String _query = '';
 
   @override
   void initState() {
     super.initState();
-    _init();
+    _date = widget.initialDate;
+    _loadStudents();
   }
 
-  Future<void> _init() async {
-    // 1) Origen de alumnos
-    if (widget.groupClass.students.isNotEmpty) {
-      _students = List<Student>.from(widget.groupClass.students);
-    } else {
-      final groupId = lg.groupKeyOf(widget.groupClass);
-      _students = await lg.getStudents(groupId);
+  Future<void> _loadStudents() async {
+    try {
+      final gid = LG.groupKeyOf(widget.groupClass);
+      final list = await LG.LocalGroups.listStudents(groupId: gid);
+      if (!mounted) return;
+      setState(() {
+        _students =
+            list..sort(
+              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+            );
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudieron cargar alumnos: $e')),
+      );
     }
-
-    // DEDUPE en memoria por id (por si ya había duplicados guardados)
-    final seen = <String>{};
-    _students = _students.where((s) => seen.add(s.id)).toList();
-
-    // 2) Intenta cargar la sesión existente para la fecha
-    await _loadExistingSessionFor(_date);
-
-    if (!mounted) return;
-    setState(() => _loading = false);
   }
 
-  Future<void> _loadExistingSessionFor(DateTime date) async {
+  // ===== helpers visuales =====
+  String _fmtTime(TimeOfDay t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  Color get _presentColor => const Color(0xFF2E7D32); // verde
+  Color get _lateColor => const Color(0xFFF9A825); // ámbar
+  Color get _absentColor => const Color(0xFFC62828); // rojo
+  Color get _muted => Theme.of(context).colorScheme.outlineVariant;
+
+  // ===== contadores =====
+  int get _countPresent =>
+      _students.where((s) => s.status == AttendanceStatus.present).length;
+  int get _countLate =>
+      _students.where((s) => s.status == AttendanceStatus.late).length;
+  int get _countAbsent =>
+      _students.where((s) => s.status == AttendanceStatus.absent).length;
+  int get _countTotal => _students.length;
+
+  void _setAllPresent() {
     setState(() {
-      _loadingSession = true;
-      _hasExisting = false;
+      for (final s in _students) {
+        s.status = AttendanceStatus.present;
+      }
     });
+  }
 
-    final groupId = lg.groupKeyOf(widget.groupClass);
-
-    // Busca una sesión EXACTA para 'date'
-    final sessions = await AttendanceService.instance.listSessions(
-      groupId: groupId,
-      limit: 1,
-      dateFrom: date,
-      dateTo: date,
+  Future<void> _pickDate() async {
+    final res = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(_date.year - 1),
+      lastDate: DateTime(_date.year + 1),
+      locale: const Locale('es', 'MX'),
     );
-
-    if (sessions.isNotEmpty) {
-      final raw = sessions.first;
-
-      final List rawStudents =
-          (raw['students'] as List?) ?? const <Map<String, dynamic>>[];
-      final Map<String, String> byId = {
-        for (final m in rawStudents)
-          ((m['studentId'] ?? m['matricula'] ?? '').toString()):
-              (m['status'] ?? 'none').toString(),
-      };
-
-      for (final s in _students) {
-        final code = byId[s.id] ?? 'none';
-        s.status = _statusFromCode(code);
-      }
-      _hasExisting = true;
-    } else {
-      for (final s in _students) {
-        s.status = AttendanceStatus.none;
-      }
-      _hasExisting = false;
-    }
-
-    if (!mounted) return;
-    setState(() => _loadingSession = false);
+    if (res != null) setState(() => _date = res);
   }
 
-  void _setAll(AttendanceStatus st) {
-    setState(() {
-      for (final s in _students) {
-        s.status = st;
-      }
-    });
+  Future<void> _save() async {
+    try {
+      // 1) local (Hive)
+      await LocalStore.saveTodaySession(
+        groupClass: widget.groupClass,
+        date: _date,
+        students: _students,
+      );
+      // 2) Firestore
+      await AttendanceService.instance.saveSessionToFirestore(
+        groupId: LG.groupKeyOf(widget.groupClass),
+        subject: widget.groupClass.subject,
+        groupName: widget.groupClass.groupName,
+        start: _fmtTime(widget.groupClass.start),
+        end: _fmtTime(widget.groupClass.end),
+        date: _date,
+        records:
+            _students
+                .map(
+                  (s) => {
+                    'studentId': s.id,
+                    'name': s.name,
+                    'status': switch (s.status) {
+                      AttendanceStatus.present => 'present',
+                      AttendanceStatus.late => 'late',
+                      AttendanceStatus.absent => 'absent',
+                      _ => 'none',
+                    },
+                  },
+                )
+                .toList(),
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Lista guardada con éxito')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error al guardar: $e')));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final df = DateFormat('d/M/yyyy');
     final filtered =
-        _students
-            .where((s) => s.name.toLowerCase().contains(search.toLowerCase()))
-            .toList();
+        _query.trim().isEmpty
+            ? _students
+            : _students.where((s) {
+              final q = _query.toLowerCase();
+              return s.name.toLowerCase().contains(q) ||
+                  s.id.toLowerCase().contains(q);
+            }).toList();
 
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
+        leading: const BackButton(),
         title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Text(
               widget.groupClass.subject,
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
+            const SizedBox(height: 2),
             Text(
-              '${widget.groupClass.groupName} • ${fmtTime(widget.groupClass.start)} - ${fmtTime(widget.groupClass.end)}',
-              style: Theme.of(context).textTheme.labelMedium,
+              '${widget.groupClass.groupName} • ${_fmtTime(widget.groupClass.start)} - ${_fmtTime(widget.groupClass.end)}\n${df.format(_date)}',
+              style: Theme.of(context).textTheme.bodySmall,
+              textAlign: TextAlign.center,
             ),
-            if (widget.groupClass.turno != null ||
-                widget.groupClass.dia != null)
-              Text(
-                '${widget.groupClass.turno ?? ''}'
-                '${(widget.groupClass.turno != null && widget.groupClass.dia != null) ? ' • ' : ''}'
-                '${widget.groupClass.dia ?? ''}',
-                style: Theme.of(context).textTheme.labelSmall,
-              ),
           ],
         ),
+        centerTitle: true,
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: FilledButton.tonal(
-              onPressed: () => _setAll(AttendanceStatus.present),
-              child: const Text('Todos Presentes'),
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: FilledButton.icon(
+              onPressed: _students.isEmpty ? null : _setAllPresent,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(
+                  0xFFD32F2F,
+                ), // botón rojo del diseño
+                minimumSize: const Size(10, 38),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
+              icon: const Icon(Icons.check),
+              label: const Text('Todos Presentes'),
             ),
           ),
         ],
       ),
+
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.all(12),
+        child: SizedBox(
+          height: 52,
+          child: FilledButton.icon(
+            onPressed: _students.isEmpty ? null : _save,
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFD32F2F), // rojo
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            icon: const Icon(Icons.save),
+            label: const Text('Guardar Lista de Asistencia'),
+          ),
+        ),
+      ),
+
       body:
           _loading
               ? const Center(child: CircularProgressIndicator())
               : Column(
                 children: [
-                  if (_loadingSession)
-                    const LinearProgressIndicator(minHeight: 2),
+                  // barra de contadores estilo chips
                   Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    child: Row(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
                       children: [
-                        _legendDot(Colors.green, 'Presentes', present),
-                        const SizedBox(width: 12),
-                        _legendDot(Colors.orange, 'Retardos', late),
-                        const SizedBox(width: 12),
-                        _legendDot(Colors.red, 'Ausentes', absent),
-                        const Spacer(),
-                        Text(
-                          '$total Total',
-                          style: Theme.of(context).textTheme.labelLarge,
+                        _CounterChip(
+                          color: _presentColor,
+                          label: 'Presentes',
+                          value: _countPresent,
+                        ),
+                        _CounterChip(
+                          color: _lateColor,
+                          label: 'Retardos',
+                          value: _countLate,
+                        ),
+                        _CounterChip(
+                          color: _absentColor,
+                          label: 'Ausentes',
+                          value: _countAbsent,
+                        ),
+                        _CounterChip(
+                          color: _muted,
+                          label: 'Total',
+                          value: _countTotal,
                         ),
                       ],
                     ),
                   ),
+
+                  // buscador
                   Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                     child: TextField(
-                      onChanged: (v) => setState(() => search = v),
+                      onChanged: (v) => setState(() => _query = v),
                       decoration: const InputDecoration(
                         prefixIcon: Icon(Icons.search),
                         hintText: 'Buscar estudiante…',
+                        isDense: true,
                       ),
                     ),
                   ),
-                  Expanded(
-                    child: ListView.separated(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
+
+                  // fecha (tap para cambiar)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _pickDate,
+                        icon: const Icon(Icons.event),
+                        label: Text('Fecha: ${df.format(_date)}'),
                       ),
-                      itemBuilder:
-                          (_, i) => _StudentRow(
-                            student: filtered[i],
-                            onChange:
-                                (st) => setState(() {
-                                  final idx = _students.indexWhere(
-                                    (s) => s.id == filtered[i].id,
-                                  );
-                                  if (idx >= 0) _students[idx].status = st;
-                                  filtered[i].status = st;
-                                }),
-                          ),
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
-                      itemCount: filtered.length,
                     ),
+                  ),
+
+                  // lista
+                  Expanded(
+                    child:
+                        filtered.isEmpty
+                            ? const Center(child: Text('Sin alumnos'))
+                            : ListView.separated(
+                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                              itemCount: filtered.length,
+                              separatorBuilder:
+                                  (_, __) => const SizedBox(height: 8),
+                              itemBuilder: (_, i) {
+                                final s = filtered[i];
+                                return _StudentCard(
+                                  student: s,
+                                  presentColor: _presentColor,
+                                  lateColor: _lateColor,
+                                  absentColor: _absentColor,
+                                  onStatus:
+                                      (st) => setState(() => s.status = st),
+                                );
+                              },
+                            ),
                   ),
                 ],
               ),
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.all(12),
-        child: SizedBox(
-          height: 48,
-          child: FilledButton.icon(
-            onPressed: _loading ? null : _save,
-            icon: const Icon(Icons.save_outlined),
-            label: Text(
-              _hasExisting
-                  ? 'Actualizar Lista de Asistencia'
-                  : 'Guardar Lista de Asistencia',
-            ),
-          ),
-        ),
-      ),
     );
-  }
-
-  Future<void> _save() async {
-    try {
-      final today = _date;
-
-      // 1) Guardado local (Hive) — usa la lista ACTUAL
-      await LocalStore.saveTodaySession(
-        groupClass: widget.groupClass,
-        date: today,
-        students: _students, // <- clave para que se guarde lo marcado
-      );
-
-      // 2) Firebase
-      final yyyymmdd = DateFormat('yyyy-MM-dd').format(today);
-      final groupId = lg.groupKeyOf(widget.groupClass);
-
-      // DEDUPE adicional por seguridad antes de subir a Firebase
-      final seen = <String>{};
-      final students =
-          _students
-              .where((s) => seen.add(s.id))
-              .map(
-                (s) => {
-                  'studentId': s.id,
-                  'name': s.name,
-                  'status': _statusCode(s.status),
-                },
-              )
-              .toList();
-
-      await AttendanceService.instance.saveAttendance(
-        groupId: groupId,
-        yyyymmdd: yyyymmdd,
-        students: students,
-        sessionMeta: {
-          'subject': widget.groupClass.subject,
-          'groupName': widget.groupClass.groupName,
-          'schedule':
-              '${fmtTime(widget.groupClass.start)}-${fmtTime(widget.groupClass.end)}',
-          'total': students.length,
-          if (widget.groupClass.turno != null) 'turno': widget.groupClass.turno,
-          if (widget.groupClass.dia != null) 'dia': widget.groupClass.dia,
-        },
-      );
-
-      if (!mounted) return;
-      setState(() => _hasExisting = true);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Lista guardada/actualizada ✅')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo guardar/sincronizar: $e')),
-      );
-    }
-  }
-
-  // -------- helpers --------
-  Widget _legendDot(Color c, String label, int n) => Row(
-    children: [
-      Container(
-        width: 10,
-        height: 10,
-        decoration: BoxDecoration(color: c, shape: BoxShape.circle),
-      ),
-      const SizedBox(width: 6),
-      Text('$n $label'),
-    ],
-  );
-
-  String _statusCode(AttendanceStatus st) {
-    switch (st) {
-      case AttendanceStatus.present:
-        return 'present';
-      case AttendanceStatus.late:
-        return 'late';
-      case AttendanceStatus.absent:
-        return 'absent';
-      case AttendanceStatus.none:
-        return 'none';
-    }
-  }
-
-  AttendanceStatus _statusFromCode(String code) {
-    switch (code) {
-      case 'present':
-        return AttendanceStatus.present;
-      case 'late':
-        return AttendanceStatus.late;
-      case 'absent':
-        return AttendanceStatus.absent;
-      default:
-        return AttendanceStatus.none;
-    }
   }
 }
 
-class _StudentRow extends StatelessWidget {
-  final Student student;
-  final ValueChanged<AttendanceStatus> onChange;
-  const _StudentRow({required this.student, required this.onChange});
+// ===== Widgets de UI =====
+
+class _CounterChip extends StatelessWidget {
+  final Color color;
+  final String label;
+  final int value;
+  const _CounterChip({
+    required this.color,
+    required this.label,
+    required this.value,
+  });
 
   @override
   Widget build(BuildContext context) {
-    Widget statusIcon(AttendanceStatus st, IconData icon, Color color) {
-      final isSelected = student.status == st;
-      return IconButton(
-        tooltip: st.name,
-        onPressed: () => onChange(st),
-        icon: Icon(icon, color: isSelected ? color : color.withOpacity(.35)),
-      );
-    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        color: Theme.of(context).colorScheme.surface,
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text('$value $label', style: Theme.of(context).textTheme.bodyMedium),
+        ],
+      ),
+    );
+  }
+}
 
+class _StudentCard extends StatelessWidget {
+  final Student student;
+  final Color presentColor, lateColor, absentColor;
+  final ValueChanged<AttendanceStatus> onStatus;
+
+  const _StudentCard({
+    required this.student,
+    required this.presentColor,
+    required this.lateColor,
+    required this.absentColor,
+    required this.onStatus,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = Theme.of(context).colorScheme.outline;
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      child: ListTile(
-        leading: CircleAvatar(child: Text(student.name.characters.first)),
-        title: Text(
-          student.name,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Text('ID: ${student.id} • ${_statusText(student.status)}'),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            statusIcon(
-              AttendanceStatus.present,
-              Icons.check_circle,
-              Colors.green,
+            // nombre + id
+            Text(
+              student.name,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
-            statusIcon(
-              AttendanceStatus.late,
-              Icons.access_time_filled,
-              Colors.orange,
+            const SizedBox(height: 4),
+            Text(
+              'ID: ${student.id}',
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: muted),
             ),
-            statusIcon(AttendanceStatus.absent, Icons.cancel, Colors.red),
+            const SizedBox(height: 10),
+
+            // 3 botones grandes
+            Row(
+              children: [
+                _StatusButton(
+                  icon: Icons.check,
+                  color: presentColor,
+                  selected: student.status == AttendanceStatus.present,
+                  onTap: () => onStatus(AttendanceStatus.present),
+                ),
+                const SizedBox(width: 12),
+                _StatusButton(
+                  icon: Icons.schedule,
+                  color: lateColor,
+                  selected: student.status == AttendanceStatus.late,
+                  onTap: () => onStatus(AttendanceStatus.late),
+                ),
+                const SizedBox(width: 12),
+                _StatusButton(
+                  icon: Icons.close,
+                  color: absentColor,
+                  selected: student.status == AttendanceStatus.absent,
+                  onTap: () => onStatus(AttendanceStatus.absent),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+            // etiqueta de estado estilo “Sin marcar”
+            Row(
+              children: [
+                const Icon(Icons.radio_button_unchecked, size: 18),
+                const SizedBox(width: 6),
+                Text(switch (student.status) {
+                  AttendanceStatus.present => 'Presente',
+                  AttendanceStatus.late => 'Retardo',
+                  AttendanceStatus.absent => 'Ausente',
+                  _ => 'Sin marcar',
+                }),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
+}
 
-  String _statusText(AttendanceStatus st) {
-    switch (st) {
-      case AttendanceStatus.present:
-        return 'Presente';
-      case AttendanceStatus.late:
-        return 'Retardo';
-      case AttendanceStatus.absent:
-        return 'Ausente';
-      case AttendanceStatus.none:
-        return 'Sin marcar';
-    }
+class _StatusButton extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _StatusButton({
+    required this.icon,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bg =
+        selected
+            ? color.withOpacity(.15)
+            : Theme.of(context).colorScheme.surfaceVariant;
+    final border = selected ? color : Colors.transparent;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(28),
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: border, width: 2),
+        ),
+        child: Icon(icon, color: color, size: 22),
+      ),
+    );
   }
 }

@@ -6,105 +6,126 @@ class AttendanceService {
   AttendanceService._();
   static final instance = AttendanceService._();
 
-  final _db = FirebaseFirestore.instance;
   final _auth = FirebaseAuth.instance;
+  final _fs = FirebaseFirestore.instance;
 
   String get _uid {
-    final u = _auth.currentUser?.uid;
-    if (u == null) throw StateError('No hay sesión iniciada');
-    return u;
+    final u = _auth.currentUser;
+    if (u == null) {
+      throw Exception('No hay usuario autenticado.');
+    }
+    return u.uid;
   }
 
-  /// Crea/actualiza una sesión de asistencia (doc: sessions/{yyyy-MM-dd})
-  Future<void> saveAttendance({
-    required String groupId,
-    required String yyyymmdd,
-    required List<Map<String, dynamic>> students,
-    Map<String, dynamic>? sessionMeta,
-  }) async {
-    final ref = _db
+  /// Colección: teachers/{uid}/attendance/{groupId}/sessions
+  CollectionReference<Map<String, dynamic>> _sessionsCol(String groupId) {
+    return _fs
         .collection('teachers')
         .doc(_uid)
-        .collection('groups')
+        .collection('attendance')
         .doc(groupId)
-        .collection('sessions')
-        .doc(yyyymmdd);
+        .collection('sessions');
+  }
 
-    final present = students.where((m) => m['status'] == 'present').length;
-    final late = students.where((m) => m['status'] == 'late').length;
-    final absent = students.where((m) => m['status'] == 'absent').length;
+  /// ID por día (igual a tu consola): yyyy-MM-dd
+  String _docIdFromDate(DateTime date) =>
+      DateFormat('yyyy-MM-dd').format(date);
 
-    await ref.set({
-      'id': yyyymmdd,
-      'date': yyyymmdd,
-      'students': students,
+  /// Crear/actualizar sesión del día
+  Future<void> saveSessionToFirestore({
+    required String groupId,
+    required String subject,
+    required String groupName,
+    required String start, // "HH:mm"
+    required String end,   // "HH:mm"
+    required DateTime date,
+    required List<Map<String, dynamic>> records, // [{studentId,name,status}]
+  }) async {
+    final col = _sessionsCol(groupId);
+    final docId = _docIdFromDate(date);
+
+    int present = 0, late = 0, absent = 0;
+    for (final r in records) {
+      final s = (r['status'] ?? '').toString();
+      if (s == 'present') present++;
+      else if (s == 'late') late++;
+      else if (s == 'absent') absent++;
+    }
+    final total = records.length;
+
+    final payload = {
+      'teacherUid': _uid,
+      'groupId': groupId,
+      'subject': subject,
+      'groupName': groupName,
+      'start': start,
+      'end': end,
+      'date': DateFormat('yyyy-MM-dd').format(date),
+      'dateTs': Timestamp.fromDate(DateTime(date.year, date.month, date.day)),
       'present': present,
       'late': late,
       'absent': absent,
-      'updatedAt': FieldValue.serverTimestamp(),
-      if (sessionMeta != null) ...sessionMeta,
-    }, SetOptions(merge: true));
+      'total': total,
+      'records': records,
+      'savedAt': FieldValue.serverTimestamp(),
+    };
+
+    await col.doc(docId).set(payload, SetOptions(merge: true));
   }
 
-  /// Lee una sesión específica
-  Future<Map<String, dynamic>?> fetchSession({
-    required String groupId,
-    required String yyyymmdd,
-  }) async {
-    final ref = _db
-        .collection('teachers')
-        .doc(_uid)
-        .collection('groups')
-        .doc(groupId)
-        .collection('sessions')
-        .doc(yyyymmdd);
-
-    final snap = await ref.get();
-    if (!snap.exists) return null;
-    return snap.data();
-  }
-
-  /// Lista sesiones del grupo (con filtros por fecha opcionales)
+  /// Lista sesiones (query por un solo campo: dateTs → sin índice compuesto)
   Future<List<Map<String, dynamic>>> listSessions({
     required String groupId,
-    int limit = 200,
     DateTime? dateFrom,
     DateTime? dateTo,
+    int limit = 100,
   }) async {
-    Query<Map<String, dynamic>> q = _db
-        .collection('teachers')
-        .doc(_uid)
-        .collection('groups')
-        .doc(groupId)
-        .collection('sessions')
-        .orderBy('date', descending: true);
+    Query<Map<String, dynamic>> q =
+        _sessionsCol(groupId).orderBy('dateTs', descending: true);
 
     if (dateFrom != null) {
-      final from = DateFormat('yyyy-MM-dd').format(dateFrom);
-      q = q.where('date', isGreaterThanOrEqualTo: from);
+      q = q.where(
+        'dateTs',
+        isGreaterThanOrEqualTo: Timestamp.fromDate(
+          DateTime(dateFrom.year, dateFrom.month, dateFrom.day),
+        ),
+      );
     }
     if (dateTo != null) {
-      final to = DateFormat('yyyy-MM-dd').format(dateTo);
-      q = q.where('date', isLessThanOrEqualTo: to);
+      final toEnd =
+          DateTime(dateTo.year, dateTo.month, dateTo.day, 23, 59, 59);
+      q = q.where('dateTs', isLessThanOrEqualTo: Timestamp.fromDate(toEnd));
     }
 
     q = q.limit(limit);
     final snap = await q.get();
-    return snap.docs.map((d) => d.data()).toList();
+    // Estandarizamos la clave del id del doc como 'docId'
+    return snap.docs.map((d) => {'docId': d.id, ...d.data()}).toList();
   }
 
-  /// 🔴 Eliminar una sesión (para tu botón "Eliminar")
-  Future<void> deleteAttendance({
+  /// Leer una sesión específica
+  Future<Map<String, dynamic>?> getSession({
     required String groupId,
-    required String yyyymmdd,
+    required DateTime date,
   }) async {
-    final ref = _db
-        .collection('teachers')
-        .doc(_uid)
-        .collection('groups')
-        .doc(groupId)
-        .collection('sessions')
-        .doc(yyyymmdd);
-    await ref.delete();
+    final d = await _sessionsCol(groupId).doc(_docIdFromDate(date)).get();
+    if (!d.exists) return null;
+    return {'docId': d.id, ...?d.data()};
+  }
+
+  /// Eliminar por fecha
+  Future<void> deleteSession({
+    required String groupId,
+    required DateTime date,
+  }) async {
+    await _sessionsCol(groupId).doc(_docIdFromDate(date)).delete();
+  }
+
+  /// ✅ NUEVO: Eliminar por docId (lo que pedía tu pantalla)
+  Future<void> deleteSessionById({
+    required String groupId,
+    required String docId,
+  }) async {
+    await _sessionsCol(groupId).doc(docId).delete();
   }
 }
