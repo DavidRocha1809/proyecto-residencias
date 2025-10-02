@@ -1,48 +1,87 @@
+// lib/pages/sessions_page.dart
 import 'package:flutter/material.dart';
 import '../models.dart';
 import '../local_groups.dart' as LG;
-import 'attendance_history_page.dart';
 
-class SessionsPage extends StatelessWidget {
-  const SessionsPage({super.key, required this.groups});
+// Importa tu pantalla real de historial (lee Firestore)
+import 'attendance_history_page.dart' show AttendanceHistoryPage;
 
-  // Lista de grupos (puede venir de tu servicio o de Firebase)
+class SessionsPage extends StatefulWidget {
+  /// Pueden venir uno o varios grupos (variantes turno/día).
   final List<GroupClass> groups;
 
-  static const route = '/sessions';
+  /// Si hay exactamente 1 grupo, saltar directo al historial.
+  final bool autoSkipSingle;
+
+  const SessionsPage({
+    super.key,
+    required this.groups,
+    this.autoSkipSingle = true,
+  });
+
+  @override
+  State<SessionsPage> createState() => _SessionsPageState();
+}
+
+class _SessionsPageState extends State<SessionsPage> {
+  @override
+  void initState() {
+    super.initState();
+
+    // Autoredirigir si sólo hay un grupo
+    if (widget.autoSkipSingle && widget.groups.length == 1) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final g = widget.groups.first;
+        final gid = LG.groupKeyOf(g);
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => AttendanceHistoryPage(
+              groupId: gid,               // <- requerido
+              subjectName: g.subject,     // <- opcional
+            ),
+          ),
+        );
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    // Evita parpadeo si redirigimos
+    if (widget.autoSkipSingle && widget.groups.length == 1) {
+      return const SizedBox.shrink();
+    }
+
+    // Si hay varios grupos, muestra lista para elegir
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Sesiones'),
-      ),
-      body: groups.isEmpty
-          ? const Center(child: Text('No tienes grupos asignados'))
-          : ListView.separated(
-              itemCount: groups.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (_, i) {
-                final groupClass = groups[i];
-                return ListTile(
-                  title: Text(groupClass.subject),
-                  subtitle: Text(groupClass.groupName),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    // 👉 Aquí abrimos el historial al tocar el grupo
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => AttendanceHistoryPage(
-                          groupId: LG.groupKeyOf(groupClass),
-                          subjectName: groupClass.subject,
-                        ),
-                      ),
-                    );
-                  },
+      appBar: AppBar(title: const Text('Sesiones')),
+      body: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        itemCount: widget.groups.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 8),
+        itemBuilder: (_, i) {
+          final g = widget.groups[i];
+          return Card(
+            child: ListTile(
+              title: Text(g.subject),
+              subtitle: Text(g.groupName),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                final gid = LG.groupKeyOf(g);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AttendanceHistoryPage(
+                      groupId: gid,           // <- requerido
+                      subjectName: g.subject, // <- opcional
+                    ),
+                  ),
                 );
               },
             ),
+          );
+        },
+      ),
     );
   }
 }

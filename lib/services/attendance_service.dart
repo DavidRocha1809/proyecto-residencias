@@ -8,7 +8,6 @@ class AttendanceService {
   FirebaseFirestore get _db => FirebaseFirestore.instance;
   String get _uid => FirebaseAuth.instance.currentUser!.uid;
 
-  /// Guarda (crea/sobrescribe) una sesión (ya lo tenías).
   Future<void> saveSessionToFirestore({
     required String groupId,
     required String subject,
@@ -47,7 +46,6 @@ class AttendanceService {
     }, SetOptions(merge: true));
   }
 
-  /// Lista sesiones para un grupo entre fechas (lo usas en historial).
   Future<List<Map<String, dynamic>>> listSessions({
     required String groupId,
     int limit = 500,
@@ -82,7 +80,20 @@ class AttendanceService {
         .toList();
   }
 
-  /// 🔎 Trae una sesión exacta por grupo+fecha (para editar o exportar)
+  /// ✅ Alias para mantener compatibilidad con llamadas existentes.
+  Future<List<Map<String, dynamic>>> listSessionsDetailed({
+    required String groupId,
+    required DateTime dateFrom,
+    required DateTime dateTo,
+  }) {
+    return listSessions(
+      groupId: groupId,
+      dateFrom: dateFrom,
+      dateTo: dateTo,
+      limit: 1000,
+    );
+  }
+
   Future<Map<String, dynamic>?> getSessionByGroupAndDate({
     required String groupId,
     required DateTime date,
@@ -104,10 +115,9 @@ class AttendanceService {
     return {'docId': d.id, ...d.data()!};
   }
 
-  /// 📝 Actualiza SOLO los records (y contadores) de una sesión existente
   Future<void> updateSessionById({
     required String groupId,
-    required String docId, // normalmente yyyy-MM-dd
+    required String docId,
     required List<Map<String, dynamic>> records,
   }) async {
     final ref = _db
@@ -128,7 +138,6 @@ class AttendanceService {
     });
   }
 
-  /// 🗑️ Eliminar (ya lo usabas desde historial)
   Future<void> deleteSessionById({
     required String groupId,
     required String docId,

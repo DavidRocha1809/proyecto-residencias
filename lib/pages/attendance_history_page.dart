@@ -2,7 +2,8 @@
 import 'edit_attendance_page.dart';
 import 'package:intl/intl.dart';
 import '../services/attendance_service.dart';
-import '../local_store.dart';
+import '../local_store.dart'; // <- si lo sigues usando en otras opciones
+import '../utils/attendance_pdf.dart'; // <- NUEVO (PDF por alumno)
 import 'package:flutter/material.dart';
 
 class AttendanceHistoryPage extends StatefulWidget {
@@ -77,24 +78,14 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
     }
   }
 
+  /// 🔄 Exporta el PDF GENERAL por **alumno** (A, R, F) con logo.
   Future<void> _exportRangePdf() async {
-    if (_rows.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No hay registros para exportar')),
-      );
-      return;
-    }
-    final titulo = [
-      'Historial de Asistencia',
-      if (widget.subjectName != null) widget.subjectName!,
-    ].join(' • ');
-
     try {
-      await LocalStore.exportPeriodPdf(
+      await AttendancePdf.exportSummaryByStudent(
+        groupId: widget.groupId,
+        subject: widget.subjectName,
         from: _range.start,
         to: _range.end,
-        rows: List<Map<String, dynamic>>.from(_rows),
-        titulo: titulo.isEmpty ? null : titulo,
       );
     } catch (e) {
       if (!mounted) return;
@@ -141,7 +132,6 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
   // ===== Editar =====
   Future<void> _onEdit(Map<String, dynamic> row) async {
     try {
-      // Traemos la sesión completa para editar (incluye records)
       final dt = DateTime.tryParse((row['date'] ?? row['docId']).toString()) ?? DateTime.now();
       final full = await AttendanceService.instance.getSessionByGroupAndDate(
         groupId: widget.groupId,
@@ -174,7 +164,7 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
       );
 
       if (changed == true) {
-        await _load(); // recargar lista
+        await _load();
       }
     } catch (e) {
       if (!mounted) return;
@@ -196,7 +186,6 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
       appBar: AppBar(title: const Text('Historial de asistencia')),
       body: Column(
         children: [
-          // filtro de fechas ancho completo + botón exportar
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: Column(

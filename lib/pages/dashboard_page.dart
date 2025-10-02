@@ -285,7 +285,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 ));
               } else {
                 Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => SessionsPage(groups: [g]),
+                  builder: (_) => SessionsPage(groups: [g], autoSkipSingle: true),
                 ));
               }
             },
