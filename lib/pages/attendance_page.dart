@@ -39,10 +39,8 @@ class _AttendancePageState extends State<AttendancePage> {
       final list = await LG.LocalGroups.listStudents(groupId: gid);
       if (!mounted) return;
       setState(() {
-        _students =
-            list..sort(
-              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-            );
+        _students = list
+          ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         _loading = false;
       });
     } catch (e) {
@@ -107,46 +105,42 @@ class _AttendancePageState extends State<AttendancePage> {
         start: _fmtTime(widget.groupClass.start),
         end: _fmtTime(widget.groupClass.end),
         date: _date,
-        records:
-            _students
-                .map(
-                  (s) => {
-                    'studentId': s.id,
-                    'name': s.name,
-                    'status': switch (s.status) {
-                      AttendanceStatus.present => 'present',
-                      AttendanceStatus.late => 'late',
-                      AttendanceStatus.absent => 'absent',
-                      _ => 'none',
-                    },
+        records: _students
+            .map((s) => {
+                  'studentId': s.id,
+                  'name': s.name,
+                  'status': switch (s.status) {
+                    AttendanceStatus.present => 'present',
+                    AttendanceStatus.late => 'late',
+                    AttendanceStatus.absent => 'absent',
+                    _ => 'none',
                   },
-                )
-                .toList(),
+                })
+            .toList(),
       );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Lista guardada con éxito')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Lista guardada con éxito')),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error al guardar: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al guardar: $e')),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final df = DateFormat('d/M/yyyy');
-    final filtered =
-        _query.trim().isEmpty
-            ? _students
-            : _students.where((s) {
-              final q = _query.toLowerCase();
-              return s.name.toLowerCase().contains(q) ||
-                  s.id.toLowerCase().contains(q);
-            }).toList();
+    final filtered = _query.trim().isEmpty
+        ? _students
+        : _students.where((s) {
+            final q = _query.toLowerCase();
+            return s.name.toLowerCase().contains(q) ||
+                s.id.toLowerCase().contains(q);
+          }).toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -173,9 +167,7 @@ class _AttendancePageState extends State<AttendancePage> {
             child: FilledButton.icon(
               onPressed: _students.isEmpty ? null : _setAllPresent,
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(
-                  0xFFD32F2F,
-                ), // botón rojo del diseño
+                backgroundColor: const Color(0xFFD32F2F), // rojo del diseño
                 minimumSize: const Size(10, 38),
                 padding: const EdgeInsets.symmetric(horizontal: 12),
               ),
@@ -204,93 +196,92 @@ class _AttendancePageState extends State<AttendancePage> {
         ),
       ),
 
-      body:
-          _loading
-              ? const Center(child: CircularProgressIndicator())
-              : Column(
-                children: [
-                  // barra de contadores estilo chips
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-                    child: Wrap(
-                      spacing: 12,
-                      runSpacing: 8,
-                      children: [
-                        _CounterChip(
-                          color: _presentColor,
-                          label: 'Presentes',
-                          value: _countPresent,
-                        ),
-                        _CounterChip(
-                          color: _lateColor,
-                          label: 'Retardos',
-                          value: _countLate,
-                        ),
-                        _CounterChip(
-                          color: _absentColor,
-                          label: 'Ausentes',
-                          value: _countAbsent,
-                        ),
-                        _CounterChip(
-                          color: _muted,
-                          label: 'Total',
-                          value: _countTotal,
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // buscador
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                    child: TextField(
-                      onChanged: (v) => setState(() => _query = v),
-                      decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.search),
-                        hintText: 'Buscar estudiante…',
-                        isDense: true,
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                // barra de contadores estilo chips
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                  child: Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: [
+                      _CounterChip(
+                        color: _presentColor,
+                        label: 'Presentes',
+                        value: _countPresent,
                       ),
-                    ),
-                  ),
-
-                  // fecha (tap para cambiar)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        onPressed: _pickDate,
-                        icon: const Icon(Icons.event),
-                        label: Text('Fecha: ${df.format(_date)}'),
+                      _CounterChip(
+                        color: _lateColor,
+                        label: 'Retardos',
+                        value: _countLate,
                       ),
+                      _CounterChip(
+                        color: _absentColor,
+                        label: 'Ausentes',
+                        value: _countAbsent,
+                      ),
+                      _CounterChip(
+                        color: _muted,
+                        label: 'Total',
+                        value: _countTotal,
+                      ),
+                    ],
+                  ),
+                ),
+
+                // buscador
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                  child: TextField(
+                    onChanged: (v) => setState(() => _query = v),
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      hintText: 'Buscar estudiante…',
+                      isDense: true,
                     ),
                   ),
+                ),
 
-                  // lista
-                  Expanded(
-                    child:
-                        filtered.isEmpty
-                            ? const Center(child: Text('Sin alumnos'))
-                            : ListView.separated(
-                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                              itemCount: filtered.length,
-                              separatorBuilder:
-                                  (_, __) => const SizedBox(height: 8),
-                              itemBuilder: (_, i) {
-                                final s = filtered[i];
-                                return _StudentCard(
-                                  student: s,
-                                  presentColor: _presentColor,
-                                  lateColor: _lateColor,
-                                  absentColor: _absentColor,
-                                  onStatus:
-                                      (st) => setState(() => s.status = st),
-                                );
-                              },
-                            ),
+                // fecha (tap para cambiar)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _pickDate,
+                      icon: const Icon(Icons.event),
+                      label: Text('Fecha: ${df.format(_date)}'),
+                    ),
                   ),
-                ],
-              ),
+                ),
+
+                // lista
+                Expanded(
+                  child: filtered.isEmpty
+                      ? const Center(child: Text('Sin alumnos'))
+                      : ListView.separated(
+                          padding:
+                              const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (_, i) {
+                            final s = filtered[i];
+                            return _StudentCard(
+                              student: s,
+                              presentColor: _presentColor,
+                              lateColor: _lateColor,
+                              absentColor: _absentColor,
+                              onStatus: (st) =>
+                                  setState(() => s.status = st),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
     );
   }
 }
@@ -325,7 +316,8 @@ class _CounterChip extends StatelessWidget {
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 6),
-          Text('$value $label', style: Theme.of(context).textTheme.bodyMedium),
+          Text('$value $label',
+              style: Theme.of(context).textTheme.bodyMedium),
         ],
       ),
     );
@@ -358,14 +350,16 @@ class _StudentCard extends StatelessWidget {
             // nombre + id
             Text(
               student.name,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 4),
             Text(
               'ID: ${student.id}',
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: muted),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: muted),
             ),
             const SizedBox(height: 10),
 
@@ -396,17 +390,19 @@ class _StudentCard extends StatelessWidget {
             ),
 
             const SizedBox(height: 10),
-            // etiqueta de estado estilo “Sin marcar”
+            // etiqueta de estado
             Row(
               children: [
                 const Icon(Icons.radio_button_unchecked, size: 18),
                 const SizedBox(width: 6),
-                Text(switch (student.status) {
-                  AttendanceStatus.present => 'Presente',
-                  AttendanceStatus.late => 'Retardo',
-                  AttendanceStatus.absent => 'Ausente',
-                  _ => 'Sin marcar',
-                }),
+                Text(
+                  switch (student.status) {
+                    AttendanceStatus.present => 'Presente',
+                    AttendanceStatus.late => 'Retardo',
+                    AttendanceStatus.absent => 'Ausente',
+                    _ => 'Sin marcar',
+                  },
+                ),
               ],
             ),
           ],
@@ -431,10 +427,9 @@ class _StatusButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg =
-        selected
-            ? color.withOpacity(.15)
-            : Theme.of(context).colorScheme.surfaceVariant;
+    final bg = selected
+        ? color.withOpacity(.15)
+        : Theme.of(context).colorScheme.surfaceVariant;
     final border = selected ? color : Colors.transparent;
     return InkWell(
       onTap: onTap,

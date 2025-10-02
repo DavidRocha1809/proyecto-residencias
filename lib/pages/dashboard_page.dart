@@ -5,11 +5,20 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+
+import 'package:printing/printing.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:pdf/pdf.dart' as pdf;
+import 'package:flutter/services.dart' show rootBundle;
 
 import '../models.dart';
-import '../local_groups.dart' as LG; // alias helpers + storage local
+import '../local_groups.dart' as LG;
+
 import 'attendance_page.dart';
 import 'sessions_page.dart';
+import 'grades_capture_page.dart';
+import 'grades_history_page.dart'; // ⬅ nuevo
 
 class DashboardPage extends StatefulWidget {
   static const route = '/dashboard';
@@ -21,6 +30,7 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
+  int _selectedTab = 0; // 0 = Pase de lista, 1 = Calificaciones
   String _query = '';
   List<GroupClass> _groups = [];
 
@@ -36,7 +46,9 @@ class _DashboardPageState extends State<DashboardPage> {
     setState(() => _groups = items);
   }
 
+  // ===================== IMPORTAR CSV =====================
   Future<void> _importGroupsAndStudentsFromCsv(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
       final picked = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -54,66 +66,51 @@ class _DashboardPageState extends State<DashboardPage> {
 
       if (rows.isEmpty) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('CSV vacío')),
-        );
+        messenger.showSnackBar(const SnackBar(content: Text('CSV vacío')));
         return;
       }
 
-      // columnas requeridas
       final header = rows.first.map((e) => e.toString().trim()).toList();
       Map<String, int> col = {};
       for (final h in [
-        'groupName',
-        'subject',
-        'start',
-        'end',
-        'turno',
-        'dia',
-        'matricula', // ó studentId
-        'name',
+        'groupName','subject','start','end','turno','dia','matricula','name'
       ]) {
         final i = header.indexOf(h);
         if (i < 0) {
           if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Falta columna "$h" en el CSV')),
-          );
+          messenger.showSnackBar(SnackBar(content: Text('Falta columna "$h"')));
           return;
         }
         col[h] = i;
       }
 
-      // Agrupar por (groupName, subject, turno, dia)
       final Map<String, Map<String, dynamic>> groups = {};
       for (var r = 1; r < rows.length; r++) {
         final row = rows[r];
         if (row.length < header.length) continue;
 
         final groupName = row[col['groupName']!]!.toString().trim();
-        final subject = row[col['subject']!]!.toString().trim();
-        final start = row[col['start']!]!.toString().trim();
-        final end = row[col['end']!]!.toString().trim();
-        final turno = row[col['turno']!]!.toString().trim();
-        final dia = row[col['dia']!]!.toString().trim();
+        final subject   = row[col['subject']!]!.toString().trim();
+        final start     = row[col['start']!]!.toString().trim();
+        final end       = row[col['end']!]!.toString().trim();
+        final turno     = row[col['turno']!]!.toString().trim();
+        final dia       = row[col['dia']!]!.toString().trim();
         final matricula = row[col['matricula']!]!.toString().trim();
-        final name = row[col['name']!]!.toString().trim();
+        final name      = row[col['name']!]!.toString().trim();
 
-        if ([groupName, subject, turno, dia, matricula, name].any((s) => s.isEmpty)) {
+        if ([groupName,subject,turno,dia,matricula,name].any((s) => s.isEmpty)) {
           continue;
         }
 
         final key = '$groupName|$subject|$turno|$dia';
-        groups.putIfAbsent(key, () {
-          return {
-            'groupName': groupName,
-            'subject': subject,
-            'turno': turno,
-            'dia': dia,
-            'start': start,
-            'end': end,
-            'students': <Map<String, dynamic>>[],
-          };
+        groups.putIfAbsent(key, () => {
+          'groupName': groupName,
+          'subject': subject,
+          'turno': turno,
+          'dia': dia,
+          'start': start,
+          'end': end,
+          'students': <Map<String, dynamic>>[],
         });
 
         (groups[key]!['students'] as List<Map<String, dynamic>>).add({
@@ -122,45 +119,14 @@ class _DashboardPageState extends State<DashboardPage> {
         });
       }
 
-      // Confirmación
-      final totalGroups = groups.length;
-      final totalStudents = groups.values
-          .map((g) => (g['students'] as List).length)
-          .fold<int>(0, (a, b) => a + b);
-
-      final ok = await showDialog<bool>(
-            context: context,
-            builder: (_) => AlertDialog(
-              title: const Text('Confirmar importación'),
-              content: Text(
-                'Se importarán $totalGroups grupo(s) y $totalStudents alumno(s) (local).',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancelar'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Importar'),
-                ),
-              ],
-            ),
-          ) ??
-          false;
-
-      if (!ok) return;
-
-      // Guardado local: 1) grupo  2) alumnos (con DEDUPE)
       for (final entry in groups.values) {
         final groupName = entry['groupName'] as String;
-        final subject = entry['subject'] as String;
-        final turno = entry['turno'] as String;
-        final dia = entry['dia'] as String;
-        final start = entry['start'] as String?;
-        final end = entry['end'] as String?;
-        final students =
-            (entry['students'] as List).cast<Map<String, dynamic>>();
+        final subject   = entry['subject'] as String;
+        final turno     = entry['turno'] as String;
+        final dia       = entry['dia'] as String;
+        final start     = entry['start'] as String?;
+        final end       = entry['end'] as String?;
+        final students  = (entry['students'] as List).cast<Map<String, dynamic>>();
 
         final groupId = LG.groupKeyFromParts(groupName, turno, dia);
 
@@ -174,7 +140,6 @@ class _DashboardPageState extends State<DashboardPage> {
           end: end,
         );
 
-        // DEDUPE por studentId antes de guardar
         final byId = <String, Map<String, dynamic>>{};
         for (final s in students) {
           final sid = (s['studentId'] ?? '').toString().trim();
@@ -189,25 +154,79 @@ class _DashboardPageState extends State<DashboardPage> {
 
       await _refreshGroups();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Importación local completa: $totalGroups grupo(s), $totalStudents alumno(s)',
-          ),
-        ),
-      );
+      messenger.showSnackBar(const SnackBar(content: Text('Importación completa')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al importar: $e')),
-      );
+      messenger.showSnackBar(SnackBar(content: Text('Error al importar: $e')));
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // Filtro por texto
-    final filtered = _groups.where((g) {
+  // (sigue existiendo tu exportación directa si algún día la quieres usar)
+  Future<void> _exportGradesPdf(GroupClass group) async {
+    try {
+      final groupId = LG.groupKeyOf(group);
+      final boxName = 'grades::$groupId';
+      if (!Hive.isBoxOpen(boxName)) await Hive.openBox(boxName);
+      final box = Hive.box(boxName);
+
+      final students = await LG.LocalGroups.listStudents(groupId: groupId)
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+      final logoBytes = await rootBundle.load('assets/images/logo_cetis31.png');
+      final logoImage = pw.MemoryImage(logoBytes.buffer.asUint8List());
+
+      final rows = <List<String>>[
+        <String>['#','Matrícula','Nombre','Calificación'],
+      ];
+      for (int i = 0; i < students.length; i++) {
+        final s = students[i];
+        final grade = box.get(s.id);
+        rows.add(['${i+1}', s.id, s.name, grade?.toString() ?? '']);
+      }
+
+      final doc = pw.Document();
+      doc.addPage(pw.MultiPage(
+        margin: const pw.EdgeInsets.all(28),
+        build: (ctx) => [
+          pw.Row(children: [
+            pw.SizedBox(width: 48, height: 48, child: pw.Image(logoImage)),
+            pw.SizedBox(width: 12),
+            pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+              pw.Text('Sistema CETIS 31', style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+              pw.Text('Historial de calificaciones', style: const pw.TextStyle(fontSize: 12)),
+            ]),
+          ]),
+          pw.SizedBox(height: 10),
+          pw.Text('${group.subject} — ${group.groupName}  (${group.turno ?? ''} ${group.dia ?? ''})', style: const pw.TextStyle(fontSize: 11)),
+          pw.SizedBox(height: 10),
+          pw.TableHelper.fromTextArray(
+            data: rows,
+            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+            cellStyle: const pw.TextStyle(fontSize: 10),
+            headerDecoration: pw.BoxDecoration(
+              color: pdf.PdfColors.grey300,
+              borderRadius: pw.BorderRadius.circular(4),
+            ),
+            cellAlignment: pw.Alignment.centerLeft,
+            headerAlignment: pw.Alignment.centerLeft,
+            border: null,
+          ),
+        ],
+      ));
+
+      final bytes = await doc.save();
+      await Printing.sharePdf(bytes: bytes, filename: 'calificaciones_${group.groupName}.pdf');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo generar el PDF: $e')));
+    }
+  }
+
+  Widget _buildCards({
+    required List<GroupClass> groups,
+    required bool isGradesMode,
+  }) {
+    final filtered = groups.where((g) {
       final q = _query.toLowerCase();
       return g.subject.toLowerCase().contains(q) ||
           g.groupName.toLowerCase().contains(q) ||
@@ -215,7 +234,6 @@ class _DashboardPageState extends State<DashboardPage> {
           (g.dia ?? '').toLowerCase().contains(q);
     }).toList();
 
-    // Agrupar por (subject + groupName)
     final Map<String, List<GroupClass>> grouped = {};
     for (final g in filtered) {
       final key = '${g.subject}|||${g.groupName}';
@@ -223,24 +241,77 @@ class _DashboardPageState extends State<DashboardPage> {
       grouped[key]!.add(g);
     }
 
+    if (grouped.isEmpty) {
+      return const Center(child: Text('Aún no hay grupos importados'));
+    }
+
+    return RefreshIndicator(
+      onRefresh: _refreshGroups,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        itemCount: grouped.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (_, i) {
+          final key = grouped.keys.elementAt(i);
+          final list = grouped[key]!;
+          final subject = list.first.subject;
+          final groupName = list.first.groupName;
+
+          return _GroupCard(
+            subject: subject,
+            groupName: groupName,
+            groups: list,
+            isGradesMode: isGradesMode,
+            onPrimary: (g) {
+              if (isGradesMode) {
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => GradesCapturePage(groupClass: g),
+                ));
+              } else {
+                final now = DateTime.now();
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => AttendancePage(
+                    groupClass: g,
+                    initialDate: DateTime(now.year, now.month, now.day),
+                  ),
+                ));
+              }
+            },
+            onSecondary: (g) {
+              if (isGradesMode) {
+                // ⬅ ahora abre el historial (no PDF directo)
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => GradesHistoryPage(groupClass: g),
+                ));
+              } else {
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => SessionsPage(groups: [g]),
+                ));
+              }
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isGrades = _selectedTab == 1;
+
     return Scaffold(
       appBar: AppBar(
         leading: Padding(
-          padding: const EdgeInsets.only(left: 8.0),
-          child: Image.asset(
-            'assets/images/logo_cetis31.png',
-            width: 32,
-            height: 32,
-            fit: BoxFit.contain,
-          ),
+          padding: const EdgeInsets.only(left: 8),
+          child: Image.asset('assets/images/logo_cetis31.png', width: 32, height: 32),
         ),
         leadingWidth: 56,
         titleSpacing: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Sistema CETIS 31',
-                style: TextStyle(fontWeight: FontWeight.w700)),
+            Text(isGrades ? 'Calificaciones' : 'Sistema CETIS 31',
+                style: const TextStyle(fontWeight: FontWeight.w700)),
             Text('Bienvenido, ${widget.teacherName}',
                 style: Theme.of(context).textTheme.labelMedium),
           ],
@@ -252,7 +323,7 @@ class _DashboardPageState extends State<DashboardPage> {
             onPressed: () => _importGroupsAndStudentsFromCsv(context),
           ),
           IconButton(
-            tooltip: 'Salir',
+            tooltip: 'Cerrar sesión',
             icon: const Icon(Icons.logout),
             onPressed: () async {
               const storage = FlutterSecureStorage();
@@ -275,23 +346,23 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ),
           ),
-          Expanded(
-            child: grouped.isEmpty
-                ? const Center(child: Text('Aún no hay grupos importados'))
-                : ListView.separated(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 6),
-                    itemBuilder: (_, i) {
-                      final key = grouped.keys.elementAt(i);
-                      final list = grouped[key]!;
-                      final subject = list.first.subject;
-                      final groupName = list.first.groupName;
-                      return _GroupMergedCard(
-                          subject: subject, groupName: groupName, groups: list);
-                    },
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemCount: grouped.length,
-                  ),
+          const Divider(height: 0),
+          Expanded(child: _buildCards(groups: _groups, isGradesMode: isGrades)),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedTab,
+        onDestinationSelected: (i) => setState(() => _selectedTab = i),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.fact_check_outlined),
+            selectedIcon: Icon(Icons.fact_check),
+            label: 'Pase de lista',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.grade_outlined),
+            selectedIcon: Icon(Icons.grade),
+            label: 'Calificaciones',
           ),
         ],
       ),
@@ -299,26 +370,26 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
-/// Tarjeta combinada por (materia + grupo)
-/// Muestra varias líneas (turno/día) pero **un solo par de botones**.
-class _GroupMergedCard extends StatelessWidget {
+class _GroupCard extends StatelessWidget {
   final String subject;
   final String groupName;
   final List<GroupClass> groups;
-  const _GroupMergedCard({
+  final bool isGradesMode;
+  final ValueChanged<GroupClass> onPrimary;
+  final ValueChanged<GroupClass> onSecondary;
+
+  const _GroupCard({
     required this.subject,
     required this.groupName,
     required this.groups,
+    required this.isGradesMode,
+    required this.onPrimary,
+    required this.onSecondary,
   });
 
   @override
   Widget build(BuildContext context) {
-    // Usamos el primer registro del grupo para abrir Tomar Lista / Historial
     final GroupClass main = groups.first;
-
-    // (opcional) suma total de alumnos si ya los cargas en GroupClass
-    final totalStudents =
-        groups.fold<int>(0, (sum, g) => sum + g.students.length);
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -329,7 +400,6 @@ class _GroupMergedCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Encabezado
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -343,10 +413,8 @@ class _GroupMergedCard extends StatelessWidget {
                           style: const TextStyle(
                               fontWeight: FontWeight.w700, fontSize: 18)),
                       const SizedBox(height: 4),
-                      Text(groupName,
-                          style: Theme.of(context).textTheme.labelLarge),
+                      Text(groupName, style: Theme.of(context).textTheme.labelLarge),
                       const SizedBox(height: 6),
-                      // Lista de variantes (turno/día)
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: groups.map((g) {
@@ -361,60 +429,38 @@ class _GroupMergedCard extends StatelessWidget {
                                 const Icon(Icons.event_note, size: 16),
                                 const SizedBox(width: 4),
                                 Text(g.dia ?? ''),
-                                const SizedBox(width: 10),
-                                const Icon(Icons.people_alt_outlined, size: 16),
-                                const SizedBox(width: 4),
-                                Text('${g.students.length}'),
+                                if (!isGradesMode) ...[
+                                  const SizedBox(width: 10),
+                                  const Icon(Icons.people_alt_outlined, size: 16),
+                                  const SizedBox(width: 4),
+                                  Text('${g.students.length}'),
+                                ],
                               ],
                             ),
                           );
                         }).toList(),
                       ),
-                      if (totalStudents > 0) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          'Total alumnos (suma de variantes): $totalStudents',
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                      ],
                     ],
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 12),
-            // Un solo par de botones para TODO el grupo
             Row(
               children: [
                 Expanded(
-                  child: FilledButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => AttendancePage(
-                            groupClass: main,
-                            initialDate: DateTime.now(),
-                          ),
-                        ),
-                      );
-                    },
-                    child: Text('Tomar Lista $groupName'),
+                  child: FilledButton.icon(
+                    onPressed: () => onPrimary(main),
+                    icon: Icon(isGradesMode ? Icons.star_border : Icons.fact_check),
+                    label: Text(isGradesMode ? 'Capturar $groupName' : 'Tomar Lista $groupName'),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => SessionsPage(groups: [main]),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.history),
-                    label: const Text('Historial'),
+                    onPressed: () => onSecondary(main),
+                    icon: Icon(isGradesMode ? Icons.history : Icons.history),
+                    label: Text('Historial'),
                   ),
                 ),
               ],
