@@ -16,7 +16,7 @@ class AttendancePdf {
       '${d.month.toString().padLeft(2, '0')}'
       '${d.day.toString().padLeft(2, '0')}';
 
-  /// Exporta resumen por **alumno** (A=presentes, R=retardos, F=faltas).
+  // ---------- PDF GENERAL (rango) RESUMEN POR ALUMNO ----------
   static Future<void> exportSummaryByStudent({
     required String groupId,
     String? subject,
@@ -24,29 +24,23 @@ class AttendancePdf {
     required DateTime from,
     required DateTime to,
   }) async {
-    // 1) Alumnos locales (para nombres y matrículas)
     final students = await LG.LocalGroups.listStudents(groupId: groupId);
-    // index por matrícula
     final map = <String, _Stu>{
       for (final s in students) s.id: _Stu(id: s.id, name: s.name),
     };
 
-    // 2) Todas las sesiones del rango
     final sessions = await AttendanceService.instance.listSessionsDetailed(
       groupId: groupId,
       dateFrom: from,
       dateTo: to,
     );
 
-    // 3) Acumular A/R/F por alumno
     for (final sess in sessions) {
       final recs = (sess['records'] as List?) ?? const [];
       for (final r in recs) {
-        final sid = (r is Map && r['studentId'] != null)
-            ? r['studentId'].toString()
-            : '';
+        final sid = (r is Map && r['studentId'] != null) ? '${r['studentId']}' : '';
         if (!map.containsKey(sid)) continue;
-        final st = (r['status'] ?? '').toString();
+        final st = '${r['status'] ?? ''}';
         switch (st) {
           case 'present':
             map[sid]!.a++;
@@ -61,65 +55,119 @@ class AttendancePdf {
       }
     }
 
-    final rowsSorted = map.values.toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    await _sharePdf(
+      title: 'Historial de asistencia (resumen por alumno)',
+      subtitleParts: [
+        if ((subject ?? '').isNotEmpty) subject!,
+        if ((groupName ?? '').isNotEmpty) groupName!,
+        'Periodo: ${_df.format(from)} — ${_df.format(to)}',
+      ],
+      header: const ['Matrícula', 'Nombre del alumno', 'A', 'R', 'F'],
+      rows: map.values
+          .toList()
+          ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())),
+      rowBuilder: (s) => [s.id, s.name, '${s.a}', '${s.r}', '${s.f}'],
+      filename: 'reporte_asistencias_alumnos_${_ymd(from)}_${_ymd(to)}.pdf',
+    );
+  }
 
-    // 4) PDF
+  // ---------- PDF DE UN DÍA (por alumno) ----------
+  static Future<void> exportSingleSessionByStudent({
+    required String groupId,
+    String? subject,
+    String? groupName,
+    required DateTime date,
+  }) async {
+    final students = await LG.LocalGroups.listStudents(groupId: groupId);
+    final map = <String, _Stu>{
+      for (final s in students) s.id: _Stu(id: s.id, name: s.name),
+    };
+
+    final sess = await AttendanceService.instance.getSessionByGroupAndDate(
+      groupId: groupId,
+      date: date,
+    );
+
+    final recs = (sess?['records'] as List?) ?? const [];
+    for (final r in recs) {
+      final sid = (r is Map && r['studentId'] != null) ? '${r['studentId']}' : '';
+      if (!map.containsKey(sid)) continue;
+      final st = '${r['status'] ?? ''}';
+      switch (st) {
+        case 'present':
+          map[sid]!.a++;
+          break;
+        case 'late':
+          map[sid]!.r++;
+          break;
+        case 'absent':
+          map[sid]!.f++;
+          break;
+      }
+    }
+
+    await _sharePdf(
+      title: 'Asistencia del día (${_df.format(date)})',
+      subtitleParts: [
+        if ((subject ?? '').isNotEmpty) subject!,
+        if ((groupName ?? '').isNotEmpty) groupName!,
+      ],
+      header: const ['Matrícula', 'Nombre del alumno', 'A', 'R', 'F'],
+      rows: map.values
+          .toList()
+          ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())),
+      rowBuilder: (s) => [s.id, s.name, '${s.a}', '${s.r}', '${s.f}'],
+      filename: 'asistencia_${_ymd(date)}.pdf',
+    );
+  }
+
+  // ---------- Helper común para armar el PDF con logo ----------
+  static final _df = DateFormat("d 'de' MMM 'de' yyyy", 'es_MX');
+
+  static Future<void> _sharePdf({
+    required String title,
+    required List<String> subtitleParts,
+    required List<String> header,
+    required List<_Stu> rows,
+    required List<String> Function(_Stu) rowBuilder,
+    required String filename,
+  }) async {
     final logoBytes =
         (await rootBundle.load('assets/images/logo_cetis31.png')).buffer.asUint8List();
     final logo = pw.MemoryImage(logoBytes);
 
-    final df = DateFormat("d 'de' MMM 'de' yyyy", 'es_MX');
     final doc = pw.Document();
-
-    // Encabezado
-    final header = pw.Row(
-      crossAxisAlignment: pw.CrossAxisAlignment.center,
-      children: [
-        pw.Container(
-          width: 48,
-          height: 48,
-          child: pw.Image(logo, fit: pw.BoxFit.contain),
-        ),
-        pw.SizedBox(width: 12),
-        pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text('Sistema CETIS 31',
-                style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-            pw.Text('Historial de asistencia (resumen por alumno)',
-                style: const pw.TextStyle(fontSize: 12)),
-          ],
-        ),
-      ],
-    );
-
-    final subtitle = pw.Text(
-      [
-        if ((subject ?? '').isNotEmpty) subject!,
-        if ((groupName ?? '').isNotEmpty) groupName!,
-        'Periodo: ${df.format(from)} — ${df.format(to)}',
-      ].where((e) => e.isNotEmpty).join('   •   '),
-      style: const pw.TextStyle(fontSize: 11),
-    );
-
-    // Tabla
-    final tableData = <List<String>>[
-      <String>['Matrícula', 'Nombre del alumno', 'A', 'R', 'F'],
-      for (final s in rowsSorted)
-        <String>[s.id, s.name, '${s.a}', '${s.r}', '${s.f}'],
-    ];
 
     doc.addPage(
       pw.MultiPage(
         margin: const pw.EdgeInsets.all(28),
         build: (_) => [
-          header,
+          pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.center,
+            children: [
+              pw.Container(width: 48, height: 48, child: pw.Image(logo, fit: pw.BoxFit.contain)),
+              pw.SizedBox(width: 12),
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('Sistema CETIS 31',
+                      style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+                  pw.Text(title, style: const pw.TextStyle(fontSize: 12)),
+                ],
+              ),
+            ],
+          ),
           pw.SizedBox(height: 8),
-          subtitle,
+          pw.Text(
+            subtitleParts.where((e) => e.isNotEmpty).join('   •   '),
+            style: const pw.TextStyle(fontSize: 11),
+          ),
           pw.SizedBox(height: 12),
           pw.TableHelper.fromTextArray(
-            data: tableData,
+            data: <List<String>>[
+              header,
+              for (final s in rows) rowBuilder(s),
+            ],
             headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
             cellStyle: const pw.TextStyle(fontSize: 10),
             headerDecoration: pw.BoxDecoration(
@@ -133,7 +181,7 @@ class AttendancePdf {
           pw.SizedBox(height: 10),
           pw.Align(
             alignment: pw.Alignment.centerRight,
-            child: pw.Text('Total de alumnos: ${rowsSorted.length}',
+            child: pw.Text('Total de alumnos: ${rows.length}',
                 style: const pw.TextStyle(fontSize: 10)),
           ),
         ],
@@ -141,11 +189,7 @@ class AttendancePdf {
     );
 
     final Uint8List bytes = await doc.save();
-    await Printing.sharePdf(
-      bytes: bytes,
-      filename:
-          'reporte_asistencias_alumnos_${_ymd(from)}_${_ymd(to)}.pdf',
-    );
+    await Printing.sharePdf(bytes: bytes, filename: filename);
   }
 }
 
@@ -153,7 +197,7 @@ class _Stu {
   _Stu({required this.id, required this.name});
   final String id;
   final String name;
-  int a = 0; // asistencias (present)
-  int r = 0; // retardos
-  int f = 0; // faltas (absent)
+  int a = 0; // present
+  int r = 0; // late
+  int f = 0; // absent
 }

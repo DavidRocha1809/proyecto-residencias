@@ -80,7 +80,7 @@ class AttendanceService {
         .toList();
   }
 
-  /// ✅ Alias para mantener compatibilidad con llamadas existentes.
+  /// Alias de compatibilidad (lo usa el PDF general).
   Future<List<Map<String, dynamic>>> listSessionsDetailed({
     required String groupId,
     required DateTime dateFrom,

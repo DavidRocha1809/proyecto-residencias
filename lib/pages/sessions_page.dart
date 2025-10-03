@@ -1,9 +1,9 @@
 // lib/pages/sessions_page.dart
 import 'package:flutter/material.dart';
 import '../models.dart';
-import '../local_groups.dart' as LG;
+// Si usas la función groupKeyOf en otros lados, déjala importada.
+// import '../local_groups.dart' as LG;
 
-// Importa tu pantalla real de historial (lee Firestore)
 import 'attendance_history_page.dart' show AttendanceHistoryPage;
 
 class SessionsPage extends StatefulWidget {
@@ -32,12 +32,10 @@ class _SessionsPageState extends State<SessionsPage> {
     if (widget.autoSkipSingle && widget.groups.length == 1) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final g = widget.groups.first;
-        final gid = LG.groupKeyOf(g);
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => AttendanceHistoryPage(
-              groupId: gid,               // <- requerido
-              subjectName: g.subject,     // <- opcional
+              groupClass: g, // <— ESTE es el parámetro correcto
             ),
           ),
         );
@@ -67,13 +65,11 @@ class _SessionsPageState extends State<SessionsPage> {
               subtitle: Text(g.groupName),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
-                final gid = LG.groupKeyOf(g);
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => AttendanceHistoryPage(
-                      groupId: gid,           // <- requerido
-                      subjectName: g.subject, // <- opcional
+                      groupClass: g, // <— PASA EL OBJETO COMPLETO
                     ),
                   ),
                 );
