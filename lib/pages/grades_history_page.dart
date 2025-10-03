@@ -1,3 +1,5 @@
+
+
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
@@ -27,6 +29,9 @@ class _GradesHistoryPageState extends State<GradesHistoryPage> {
   List<Student> _students = [];
   List<_Activity> _activities = [];
   bool _loading = true;
+
+  // ------- NUEVO: búsqueda para elegir alumno en exportación
+  String _studentQuery = '';
 
   @override
   void initState() {
@@ -208,6 +213,199 @@ class _GradesHistoryPageState extends State<GradesHistoryPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('No se pudo generar el PDF: $e')),
       );
+    }
+  }
+
+  // ===== NUEVO: Exportar PDF de un solo alumno en el rango =====
+  Future<void> _exportStudentPdf(Student s) async {
+    try {
+      final df = DateFormat('dd/MM/yyyy');
+      final logoImage = await _loadLogo();
+      final inRange = _inRangeActivities();
+
+      final rows = <List<String>>[
+        ['Fecha','Actividad','Calificación'],
+      ];
+
+      int entregas = 0;
+      double suma = 0;
+      int cuenta = 0;
+
+      for (final a in inRange) {
+        final val = a.grades[s.id];
+        final txt = (val == null) ? '' : val.toString();
+        rows.add([df.format(a.date), a.name.isEmpty ? '(sin título)' : a.name, txt]);
+
+        if (txt.trim().isNotEmpty) {
+          final n = num.tryParse(txt);
+          if (n != null) {
+            suma += n.toDouble();
+            cuenta++;
+          }
+          entregas++;
+        }
+      }
+
+      final promedio = (cuenta == 0) ? '-' : (suma / cuenta).toStringAsFixed(1);
+
+      final doc = pw.Document();
+      doc.addPage(
+        pw.MultiPage(
+          margin: const pw.EdgeInsets.all(28),
+          build: (ctx) => [
+            pw.Row(children: [
+              pw.SizedBox(width: 48, height: 48, child: pw.Image(logoImage)),
+              pw.SizedBox(width: 12),
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('Sistema CETIS 31', style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+                  pw.Text('Historial de calificaciones por alumno', style: const pw.TextStyle(fontSize: 12)),
+                ],
+              ),
+            ]),
+            pw.SizedBox(height: 8),
+            pw.Text('${widget.groupClass.subject}   ${widget.groupClass.groupName}',
+                style: const pw.TextStyle(fontSize: 11)),
+            pw.Text('Alumno: ${s.name}    Matrícula: ${s.id}', style: const pw.TextStyle(fontSize: 10)),
+            pw.Text('Rango: ${df.format(_from)} a ${df.format(_to)}', style: const pw.TextStyle(fontSize: 10)),
+            pw.SizedBox(height: 10),
+            pw.TableHelper.fromTextArray(
+              data: rows,
+              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              cellStyle: const pw.TextStyle(fontSize: 10),
+              headerDecoration: pw.BoxDecoration(
+                color: pdf.PdfColors.grey300,
+                borderRadius: pw.BorderRadius.circular(4),
+              ),
+              cellAlignment: pw.Alignment.centerLeft,
+              headerAlignment: pw.Alignment.centerLeft,
+              border: null,
+            ),
+            pw.SizedBox(height: 10),
+            pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text('Entregas: $entregas      Promedio: $promedio', style: const pw.TextStyle(fontSize: 10)),
+            ),
+          ],
+        ),
+      );
+
+      await Printing.sharePdf(
+        bytes: await doc.save(),
+        filename: 'calificaciones_${s.id}_${DateFormat('yyyyMMdd').format(_from)}_${DateFormat('yyyyMMdd').format(_to)}.pdf',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo generar el PDF del alumno: $e')),
+      );
+    }
+  }
+
+  // ===== NUEVO: selector de tipo de exportación =====
+  Future<void> _pickExport() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.picture_as_pdf_outlined),
+              title: const Text('PDF general (resumen por alumno)'),
+              onTap: () async {
+                Navigator.pop(context);
+                await _exportGeneralPdf();
+              },
+            ),
+            const Divider(height: 0),
+            ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: const Text('PDF de un alumno'),
+              subtitle: const Text('Elige un alumno del grupo'),
+              onTap: () {
+                Navigator.pop(context);
+                _chooseStudentAndExport();
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ===== NUEVO: buscador/lista para elegir alumno y exportar =====
+  Future<void> _chooseStudentAndExport() async {
+    _studentQuery = '';
+    final res = await showModalBottomSheet<Student>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSt) {
+            final q = _studentQuery.toLowerCase();
+            final list = _students.where((s) =>
+              s.name.toLowerCase().contains(q) || s.id.toLowerCase().contains(q)
+            ).toList();
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(ctx).viewInsets.bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text('Elegir alumno', style: TextStyle(fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: TextField(
+                        autofocus: true,
+                        onChanged: (v) => setSt(() => _studentQuery = v),
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.search),
+                          hintText: 'Buscar por nombre o matrícula…',
+                        ),
+                      ),
+                    ),
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                        itemBuilder: (_, i) {
+                          final s = list[i];
+                          return ListTile(
+                            leading: const Icon(Icons.person_outline),
+                            title: Text(s.name),
+                            subtitle: Text('Matrícula: ${s.id}'),
+                            onTap: () => Navigator.pop(ctx, s),
+                          );
+                        },
+                        separatorBuilder: (_, __) => const Divider(height: 0),
+                        itemCount: list.length,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (res != null) {
+      await _exportStudentPdf(res);
     }
   }
 
@@ -412,9 +610,10 @@ class _GradesHistoryPageState extends State<GradesHistoryPage> {
         child: SizedBox(
           height: 52,
           child: FilledButton.icon(
-            onPressed: _students.isEmpty ? null : _exportGeneralPdf,
+            // ======= NUEVO: ahora abre el selector de exportación =======
+            onPressed: _students.isEmpty ? null : _pickExport,
             icon: const Icon(Icons.picture_as_pdf_outlined),
-            label: const Text('Exportar PDF general'),
+            label: const Text('Exportar PDF'),
           ),
         ),
       ),
@@ -486,7 +685,12 @@ class _GradesHistoryPageState extends State<GradesHistoryPage> {
                                       icon: const Icon(Icons.delete_outline),
                                       onPressed: () => _deleteActivity(a),
                                     ),
-                                    
+                                    // Exportar PDF de esta actividad (ya existía)
+                                    IconButton(
+                                      tooltip: 'Exportar PDF de actividad',
+                                      icon: const Icon(Icons.picture_as_pdf_outlined),
+                                      onPressed: () => _exportActivityPdf(a),
+                                    ),
                                   ],
                                 ),
                               ),
