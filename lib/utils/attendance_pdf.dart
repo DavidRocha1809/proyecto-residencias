@@ -150,7 +150,7 @@ class AttendancePdf {
               pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Text('Sistema CETIS 31',
+                  pw.Text('Asistenciaue CETIS 31',
                       style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
                   pw.Text(title, style: const pw.TextStyle(fontSize: 12)),
                 ],

@@ -1,20 +1,23 @@
+// lib/pages/grades_capture_page.dart
 import 'package:flutter/material.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 import '../models.dart';
 import '../local_groups.dart' as LG;
+import '../services/grades_service.dart';
 
 class GradesCapturePage extends StatefulWidget {
   final GroupClass groupClass;
 
-  /// Si no es null -> se edita una actividad ya existente (clave en grades_log::<gid>)
-  final String? editingActivityKey;
+  /// Opcional: si algún día pasas una actividad existente, se usará para prellenar.
+  /// En el flujo actual NO se pasa, así que todo queda en blanco.
+  final Map<String, dynamic>? existing; // {title, date(yyyy-MM-dd), grades: {id:score}}
 
   const GradesCapturePage({
     super.key,
     required this.groupClass,
-    this.editingActivityKey,
+    this.existing,
   });
 
   @override
@@ -22,14 +25,19 @@ class GradesCapturePage extends StatefulWidget {
 }
 
 class _GradesCapturePageState extends State<GradesCapturePage> {
-  final _nameCtl = TextEditingController();
-  DateTime _date = DateTime.now(); // solo se usa en nuevo registro
+  final _formKey = GlobalKey<FormState>();
+
+  final _titleCtrl = TextEditingController();
+  DateTime _date = DateTime.now();
+
+  /// Un controlador por alumno
+  final Map<String, TextEditingController> _gradeCtrls = {};
+
   bool _loading = true;
-
   List<Student> _students = [];
-  final Map<String, TextEditingController> _gradeCtl = {};
 
-  bool get _isEdit => widget.editingActivityKey != null;
+  String get _groupId => LG.groupKeyOf(widget.groupClass);
+  String get _boxName => 'grades_log::$_groupId';
 
   @override
   void initState() {
@@ -38,59 +46,55 @@ class _GradesCapturePageState extends State<GradesCapturePage> {
   }
 
   Future<void> _load() async {
-    try {
-      final gid = LG.groupKeyOf(widget.groupClass);
-      final studs = await LG.LocalGroups.listStudents(groupId: gid)
-        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    setState(() => _loading = true);
 
-      // prepara controles
+    // 1) alumnos reales del grupo
+    final studs = await LG.LocalGroups.listStudents(groupId: _groupId)
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+    // 2) SI y solo SI nos pasan existing (modo edición), prellenamos;
+    //    de lo contrario, SIEMPRE en blanco (lo que pediste).
+    if (widget.existing != null) {
+      final ex = widget.existing!;
+      _titleCtrl.text = (ex['title'] ?? '').toString();
+      final raw = (ex['date'] ?? '').toString();
+      try {
+        final p = raw.split('-').map((e) => int.parse(e)).toList();
+        _date = DateTime(p[0], p[1], p[2]);
+      } catch (_) {
+        _date = DateTime.now();
+      }
+      final grades = Map<String, dynamic>.from(ex['grades'] ?? const {});
       for (final s in studs) {
-        _gradeCtl[s.id] = TextEditingController();
+        _gradeCtrls[s.id] = TextEditingController(
+          text: grades[s.id]?.toString() ?? '',
+        );
       }
-
-      // Si es edición, cargar actividad existente
-      if (_isEdit) {
-        final logBoxName = 'grades_log::$gid';
-        if (!Hive.isBoxOpen(logBoxName)) await Hive.openBox(logBoxName);
-        final logBox = Hive.box(logBoxName);
-        final map = Map<String, dynamic>.from(logBox.get(widget.editingActivityKey) as Map);
-
-        _nameCtl.text = (map['activity'] ?? '').toString();
-        final dt = DateTime.fromMillisecondsSinceEpoch(map['date'] as int);
-        _date = DateTime(dt.year, dt.month, dt.day);
-
-        final grades = Map<String, dynamic>.from(map['grades'] ?? const {});
-        for (final s in studs) {
-          final v = grades[s.id];
-          _gradeCtl[s.id]?.text = (v == null) ? '' : v.toString();
-        }
-      } else {
-        // Modo nuevo: precargar último valor por alumno (opcional)
-        final boxName = 'grades::$gid';
-        if (!Hive.isBoxOpen(boxName)) await Hive.openBox(boxName);
-        final box = Hive.box(boxName);
-        for (final s in studs) {
-          final last = box.get(s.id);
-          if (last != null) _gradeCtl[s.id]?.text = last.toString();
-        }
+    } else {
+      // >>>> SIEMPRE BLANCO <<<<
+      _titleCtrl.clear();
+      _date = DateTime.now();
+      for (final s in studs) {
+        _gradeCtrls[s.id] = TextEditingController(text: '');
       }
-
-      if (!mounted) return;
-      setState(() {
-        _students = studs;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo cargar alumnos: $e')),
-      );
     }
+
+    setState(() {
+      _students = studs;
+      _loading = false;
+    });
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    for (final c in _gradeCtrls.values) {
+      c.dispose();
+    }
+    super.dispose();
   }
 
   Future<void> _pickDate() async {
-    if (_isEdit) return; // en edición no se cambia fecha desde aquí
     final r = await showDatePicker(
       context: context,
       initialDate: _date,
@@ -102,150 +106,162 @@ class _GradesCapturePageState extends State<GradesCapturePage> {
   }
 
   Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final title = _titleCtrl.text.trim().isEmpty
+        ? 'Actividad'
+        : _titleCtrl.text.trim();
+
+    // Construimos el mapa de calificaciones por matrícula
+    final grades = <String, dynamic>{};
+    for (final s in _students) {
+      final txt = _gradeCtrls[s.id]!.text.trim();
+      grades[s.id] = txt.isEmpty ? '' : txt; // guardamos tal cual (compatible)
+    }
+
     try {
-      final gid = LG.groupKeyOf(widget.groupClass);
-
-      // quick box de último valor por alumno
-      final quickBoxName = 'grades::$gid';
-      if (!Hive.isBoxOpen(quickBoxName)) await Hive.openBox(quickBoxName);
-      final quick = Hive.box(quickBoxName);
-
-      // mapa de calificaciones
-      final Map<String, dynamic> grades = {};
-      for (final s in _students) {
-        final t = _gradeCtl[s.id]?.text.trim() ?? '';
-        if (t.isEmpty) {
-          grades[s.id] = null;
-        } else {
-          final n = num.tryParse(t);
-          grades[s.id] = n ?? t; // permite num o texto
-          // actualiza último valor
-          quick.put(s.id, grades[s.id]);
-        }
+      // 1) Guardado local (Hive) para tu historial previo/compatibilidad
+      if (!Hive.isBoxOpen(_boxName)) {
+        await Hive.openBox(_boxName);
       }
+      final box = Hive.box(_boxName);
+      final key = '${DateTime.now().millisecondsSinceEpoch}::$title';
+      await box.put(key, {
+        'activity': title,
+        'date': DateFormat('yyyy-MM-dd').format(_date),
+        'grades': grades,
+      });
 
-      // log de actividades
-      final logBoxName = 'grades_log::$gid';
-      if (!Hive.isBoxOpen(logBoxName)) await Hive.openBox(logBoxName);
-      final logBox = Hive.box(logBoxName);
-
-      if (_isEdit) {
-        // sobrescribe solo el mapa de grades para la misma clave
-        final prev = Map<String, dynamic>.from(logBox.get(widget.editingActivityKey) as Map);
-        await logBox.put(widget.editingActivityKey, {
-          'activity': prev['activity'],
-          'date': prev['date'],
-          'grades': grades,
-        });
-      } else {
-        final key = '${DateTime(_date.year, _date.month, _date.day).millisecondsSinceEpoch}::${_nameCtl.text.trim()}';
-        await logBox.put(key, {
-          'activity': _nameCtl.text.trim(),
-          'date': DateTime(_date.year, _date.month, _date.day).millisecondsSinceEpoch,
-          'grades': grades,
-        });
-      }
+      // 2) Guardado en Firestore (nuevo)
+      await GradesService.saveActivity(
+        groupId: _groupId,
+        dateOnly: DateTime(_date.year, _date.month, _date.day),
+        activityName: title,
+        gradesByStudentId: grades,
+      );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_isEdit ? 'Calificaciones actualizadas' : 'Actividad guardada')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Actividad guardada')));
       Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo guardar: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('No se pudo guardar: $e')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final df = DateFormat('d/M/yyyy');
+    final df = DateFormat('dd/MM/yyyy');
+    final g = widget.groupClass;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isEdit ? 'Editar calificaciones' : 'Capturar calificaciones'),
+        title: const Text('Capturar calificaciones'),
         actions: [
           IconButton(
-            onPressed: _students.isEmpty ? null : _save,
-            icon: const Icon(Icons.save),
             tooltip: 'Guardar',
-          ),
+            icon: const Icon(Icons.save_outlined),
+            onPressed: _save,
+          )
         ],
       ),
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.all(12),
         child: SizedBox(
-          height: 52,
+          height: 56,
           child: FilledButton.icon(
-            onPressed: _students.isEmpty ? null : _save,
-            icon: const Icon(Icons.save_outlined),
-            label: Text(_isEdit ? 'Guardar cambios' : 'Guardar actividad'),
+            onPressed: _loading ? null : _save,
+            icon: const Icon(Icons.save_alt),
+            label: const Text('Guardar actividad'),
           ),
         ),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                  child: TextField(
-                    controller: _nameCtl,
-                    enabled: !_isEdit, // en edición el nombre lo cambias desde historial
+          : Form(
+              key: _formKey,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                children: [
+                  // Nombre de la actividad
+                  TextFormField(
+                    controller: _titleCtrl,
                     decoration: const InputDecoration(
-                      labelText: 'Nombre de la actividad',
                       prefixIcon: Icon(Icons.star_border),
+                      labelText: 'Nombre de la actividad',
+                      border: UnderlineInputBorder(),
                     ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _isEdit ? null : _pickDate,
-                          icon: const Icon(Icons.event),
-                          label: Text('Fecha: ${df.format(_date)}'),
+                  const SizedBox(height: 8),
+                  // Fecha
+                  OutlinedButton.icon(
+                    onPressed: _pickDate,
+                    icon: const Icon(Icons.event),
+                    label: Text('Fecha: ${df.format(_date)}'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 14),
+                      shape: StadiumBorder(
+                        side: BorderSide(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .outlineVariant,
                         ),
                       ),
-                    ],
+                    ),
                   ),
-                ),
-                const Divider(height: 0),
-                Expanded(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: _students.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (_, i) {
-                      final s = _students[i];
-                      final ctl = _gradeCtl[s.id]!;
-                      return Card(
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        child: ListTile(
-                          title: Text(s.name),
-                          subtitle: Text('Matrícula: ${s.id}'),
-                          trailing: SizedBox(
-                            width: 90,
-                            child: TextField(
-                              controller: ctl,
-                              textAlign: TextAlign.center,
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: false),
+                  const SizedBox(height: 12),
+
+                  // Lista de alumnos
+                  ..._students.map((s) {
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.pink.shade50,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 14),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(s.name,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w600)),
+                                const SizedBox(height: 4),
+                                Text('Matrícula: ${s.id}',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            width: 100,
+                            child: TextFormField(
+                              controller: _gradeCtrls[s.id],
+                              textAlign: TextAlign.right,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
                               decoration: const InputDecoration(
-                                isDense: true,
-                                hintText: '—',
+                                hintText: '',
+                                border: UnderlineInputBorder(),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
             ),
     );
   }

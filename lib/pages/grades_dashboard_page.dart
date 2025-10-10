@@ -89,7 +89,7 @@ class _GradesDashboardPageState extends State<GradesDashboardPage> {
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
                         pw.Text(
-                          'Sistema CETIS 31',
+                          'Asistencias CETIS 31',
                           style: pw.TextStyle(
                             fontSize: 18,
                             fontWeight: pw.FontWeight.bold,

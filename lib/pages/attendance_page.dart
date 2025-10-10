@@ -365,6 +365,7 @@ class _StudentCard extends StatelessWidget {
 
             // 3 botones grandes
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 _StatusButton(
                   icon: Icons.check,

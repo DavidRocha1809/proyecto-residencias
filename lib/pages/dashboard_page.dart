@@ -73,7 +73,14 @@ class _DashboardPageState extends State<DashboardPage> {
       final header = rows.first.map((e) => e.toString().trim()).toList();
       Map<String, int> col = {};
       for (final h in [
-        'groupName','subject','start','end','turno','dia','matricula','name'
+        'groupName',
+        'subject',
+        'start',
+        'end',
+        'turno',
+        'dia',
+        'matricula',
+        'name',
       ]) {
         final i = header.indexOf(h);
         if (i < 0) {
@@ -90,28 +97,38 @@ class _DashboardPageState extends State<DashboardPage> {
         if (row.length < header.length) continue;
 
         final groupName = row[col['groupName']!]!.toString().trim();
-        final subject   = row[col['subject']!]!.toString().trim();
-        final start     = row[col['start']!]!.toString().trim();
-        final end       = row[col['end']!]!.toString().trim();
-        final turno     = row[col['turno']!]!.toString().trim();
-        final dia       = row[col['dia']!]!.toString().trim();
+        final subject = row[col['subject']!]!.toString().trim();
+        final start = row[col['start']!]!.toString().trim();
+        final end = row[col['end']!]!.toString().trim();
+        final turno = row[col['turno']!]!.toString().trim();
+        final dia = row[col['dia']!]!.toString().trim();
         final matricula = row[col['matricula']!]!.toString().trim();
-        final name      = row[col['name']!]!.toString().trim();
+        final name = row[col['name']!]!.toString().trim();
 
-        if ([groupName,subject,turno,dia,matricula,name].any((s) => s.isEmpty)) {
+        if ([
+          groupName,
+          subject,
+          turno,
+          dia,
+          matricula,
+          name,
+        ].any((s) => s.isEmpty)) {
           continue;
         }
 
         final key = '$groupName|$subject|$turno|$dia';
-        groups.putIfAbsent(key, () => {
-          'groupName': groupName,
-          'subject': subject,
-          'turno': turno,
-          'dia': dia,
-          'start': start,
-          'end': end,
-          'students': <Map<String, dynamic>>[],
-        });
+        groups.putIfAbsent(
+          key,
+          () => {
+            'groupName': groupName,
+            'subject': subject,
+            'turno': turno,
+            'dia': dia,
+            'start': start,
+            'end': end,
+            'students': <Map<String, dynamic>>[],
+          },
+        );
 
         (groups[key]!['students'] as List<Map<String, dynamic>>).add({
           'studentId': matricula,
@@ -121,12 +138,13 @@ class _DashboardPageState extends State<DashboardPage> {
 
       for (final entry in groups.values) {
         final groupName = entry['groupName'] as String;
-        final subject   = entry['subject'] as String;
-        final turno     = entry['turno'] as String;
-        final dia       = entry['dia'] as String;
-        final start     = entry['start'] as String?;
-        final end       = entry['end'] as String?;
-        final students  = (entry['students'] as List).cast<Map<String, dynamic>>();
+        final subject = entry['subject'] as String;
+        final turno = entry['turno'] as String;
+        final dia = entry['dia'] as String;
+        final start = entry['start'] as String?;
+        final end = entry['end'] as String?;
+        final students =
+            (entry['students'] as List).cast<Map<String, dynamic>>();
 
         final groupId = LG.groupKeyFromParts(groupName, turno, dia);
 
@@ -154,7 +172,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
       await _refreshGroups();
       if (!mounted) return;
-      messenger.showSnackBar(const SnackBar(content: Text('Importación completa')));
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Importación completa')),
+      );
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(SnackBar(content: Text('Error al importar: $e')));
@@ -176,49 +196,78 @@ class _DashboardPageState extends State<DashboardPage> {
       final logoImage = pw.MemoryImage(logoBytes.buffer.asUint8List());
 
       final rows = <List<String>>[
-        <String>['#','Matrícula','Nombre','Calificación'],
+        <String>['#', 'Matrícula', 'Nombre', 'Calificación'],
       ];
       for (int i = 0; i < students.length; i++) {
         final s = students[i];
         final grade = box.get(s.id);
-        rows.add(['${i+1}', s.id, s.name, grade?.toString() ?? '']);
+        rows.add(['${i + 1}', s.id, s.name, grade?.toString() ?? '']);
       }
 
       final doc = pw.Document();
-      doc.addPage(pw.MultiPage(
-        margin: const pw.EdgeInsets.all(28),
-        build: (ctx) => [
-          pw.Row(children: [
-            pw.SizedBox(width: 48, height: 48, child: pw.Image(logoImage)),
-            pw.SizedBox(width: 12),
-            pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-              pw.Text('Sistema CETIS 31', style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-              pw.Text('Historial de calificaciones', style: const pw.TextStyle(fontSize: 12)),
-            ]),
-          ]),
-          pw.SizedBox(height: 10),
-          pw.Text('${group.subject} — ${group.groupName}  (${group.turno ?? ''} ${group.dia ?? ''})', style: const pw.TextStyle(fontSize: 11)),
-          pw.SizedBox(height: 10),
-          pw.TableHelper.fromTextArray(
-            data: rows,
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-            cellStyle: const pw.TextStyle(fontSize: 10),
-            headerDecoration: pw.BoxDecoration(
-              color: pdf.PdfColors.grey300,
-              borderRadius: pw.BorderRadius.circular(4),
-            ),
-            cellAlignment: pw.Alignment.centerLeft,
-            headerAlignment: pw.Alignment.centerLeft,
-            border: null,
-          ),
-        ],
-      ));
+      doc.addPage(
+        pw.MultiPage(
+          margin: const pw.EdgeInsets.all(28),
+          build:
+              (ctx) => [
+                pw.Row(
+                  children: [
+                    pw.SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: pw.Image(logoImage),
+                    ),
+                    pw.SizedBox(width: 12),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          'Sistema CETIS 31',
+                          style: pw.TextStyle(
+                            fontSize: 18,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                        pw.Text(
+                          'Historial de calificaciones',
+                          style: const pw.TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 10),
+                pw.Text(
+                  '${group.subject} — ${group.groupName}  (${group.turno ?? ''} ${group.dia ?? ''})',
+                  style: const pw.TextStyle(fontSize: 11),
+                ),
+                pw.SizedBox(height: 10),
+                pw.TableHelper.fromTextArray(
+                  data: rows,
+                  headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                  cellStyle: const pw.TextStyle(fontSize: 10),
+                  headerDecoration: pw.BoxDecoration(
+                    color: pdf.PdfColors.grey300,
+                    borderRadius: pw.BorderRadius.circular(4),
+                  ),
+                  cellAlignment: pw.Alignment.centerLeft,
+                  headerAlignment: pw.Alignment.centerLeft,
+                  border: null,
+                ),
+              ],
+        ),
+      );
 
       final bytes = await doc.save();
-      await Printing.sharePdf(bytes: bytes, filename: 'calificaciones_${group.groupName}.pdf');
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: 'calificaciones_${group.groupName}.pdf',
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo generar el PDF: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo generar el PDF: $e')));
     }
   }
 
@@ -226,13 +275,14 @@ class _DashboardPageState extends State<DashboardPage> {
     required List<GroupClass> groups,
     required bool isGradesMode,
   }) {
-    final filtered = groups.where((g) {
-      final q = _query.toLowerCase();
-      return g.subject.toLowerCase().contains(q) ||
-          g.groupName.toLowerCase().contains(q) ||
-          (g.turno ?? '').toLowerCase().contains(q) ||
-          (g.dia ?? '').toLowerCase().contains(q);
-    }).toList();
+    final filtered =
+        groups.where((g) {
+          final q = _query.toLowerCase();
+          return g.subject.toLowerCase().contains(q) ||
+              g.groupName.toLowerCase().contains(q) ||
+              (g.turno ?? '').toLowerCase().contains(q) ||
+              (g.dia ?? '').toLowerCase().contains(q);
+        }).toList();
 
     final Map<String, List<GroupClass>> grouped = {};
     for (final g in filtered) {
@@ -264,29 +314,43 @@ class _DashboardPageState extends State<DashboardPage> {
             isGradesMode: isGradesMode,
             onPrimary: (g) {
               if (isGradesMode) {
-                Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => GradesCapturePage(groupClass: g),
-                ));
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => GradesCapturePage(groupClass: g),
+                  ),
+                );
               } else {
                 final now = DateTime.now();
-                Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => AttendancePage(
-                    groupClass: g,
-                    initialDate: DateTime(now.year, now.month, now.day),
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (_) => AttendancePage(
+                          groupClass: g,
+                          initialDate: DateTime(now.year, now.month, now.day),
+                        ),
                   ),
-                ));
+                );
               }
             },
             onSecondary: (g) {
               if (isGradesMode) {
                 // ⬅ ahora abre el historial (no PDF directo)
-                Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => GradesHistoryPage(groupClass: g),
-                ));
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => GradesHistoryPage(groupClass: g),
+                  ),
+                );
               } else {
-                Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => SessionsPage(groups: [g], autoSkipSingle: true),
-                ));
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (_) => SessionsPage(groups: [g], autoSkipSingle: true),
+                  ),
+                );
               }
             },
           );
@@ -303,17 +367,25 @@ class _DashboardPageState extends State<DashboardPage> {
       appBar: AppBar(
         leading: Padding(
           padding: const EdgeInsets.only(left: 8),
-          child: Image.asset('assets/images/logo_cetis31.png', width: 32, height: 32),
+          child: Image.asset(
+            'assets/images/logo_cetis31.png',
+            width: 32,
+            height: 32,
+          ),
         ),
         leadingWidth: 56,
         titleSpacing: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(isGrades ? 'Calificaciones' : 'Sistema CETIS 31',
-                style: const TextStyle(fontWeight: FontWeight.w700)),
-            Text('Bienvenido, ${widget.teacherName}',
-                style: Theme.of(context).textTheme.labelMedium),
+            Text(
+              isGrades ? 'Calificaciones CETIS 31' : 'Asistencias CETIS 31',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            Text(
+              'Bienvenido, ${widget.teacherName}',
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
           ],
         ),
         actions: [
@@ -409,36 +481,38 @@ class _GroupCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(subject,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w700, fontSize: 18)),
+                      Text(
+                        subject,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 18,
+                        ),
+                      ),
                       const SizedBox(height: 4),
-                      Text(groupName, style: Theme.of(context).textTheme.labelLarge),
+                      Text(
+                        groupName,
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
                       const SizedBox(height: 6),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: groups.map((g) {
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.auto_awesome, size: 16),
-                                const SizedBox(width: 4),
-                                Text(g.turno ?? ''),
-                                const SizedBox(width: 10),
-                                const Icon(Icons.event_note, size: 16),
-                                const SizedBox(width: 4),
-                                Text(g.dia ?? ''),
-                                if (!isGradesMode) ...[
-                                  const SizedBox(width: 10),
-                                  const Icon(Icons.people_alt_outlined, size: 16),
-                                  const SizedBox(width: 4),
-                                  Text('${g.students.length}'),
-                                ],
-                              ],
-                            ),
-                          );
-                        }).toList(),
+                        children:
+                            groups.map((g) {
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.auto_awesome, size: 16),
+                                    const SizedBox(width: 4),
+                                    Text(g.turno ?? ''),
+                                    const SizedBox(width: 10),
+                                    const Icon(Icons.event_note, size: 16),
+                                    const SizedBox(width: 4),
+                                    Text(g.dia ?? ''),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
                       ),
                     ],
                   ),
@@ -451,8 +525,14 @@ class _GroupCard extends StatelessWidget {
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: () => onPrimary(main),
-                    icon: Icon(isGradesMode ? Icons.star_border : Icons.fact_check),
-                    label: Text(isGradesMode ? 'Capturar $groupName' : 'Tomar Lista $groupName'),
+                    icon: Icon(
+                      isGradesMode ? Icons.star_border : Icons.fact_check,
+                    ),
+                    label: Text(
+                      isGradesMode
+                          ? 'Capturar $groupName'
+                          : 'Tomar Lista $groupName',
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),

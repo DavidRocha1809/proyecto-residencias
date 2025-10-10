@@ -1,8 +1,7 @@
 // lib/pages/sessions_page.dart
 import 'package:flutter/material.dart';
 import '../models.dart';
-// Si usas la función groupKeyOf en otros lados, déjala importada.
-// import '../local_groups.dart' as LG;
+import '../local_groups.dart' as LG;
 
 import 'attendance_history_page.dart' show AttendanceHistoryPage;
 
@@ -35,7 +34,8 @@ class _SessionsPageState extends State<SessionsPage> {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => AttendanceHistoryPage(
-              groupClass: g, // <— ESTE es el parámetro correcto
+              groupId: LG.groupKeyOf(g),   // ✅ lo que pide el constructor
+              subjectName: g.subject,      // (opcional) para mostrar
             ),
           ),
         );
@@ -69,7 +69,8 @@ class _SessionsPageState extends State<SessionsPage> {
                   context,
                   MaterialPageRoute(
                     builder: (_) => AttendanceHistoryPage(
-                      groupClass: g, // <— PASA EL OBJETO COMPLETO
+                      groupId: LG.groupKeyOf(g), // ✅ clave del grupo
+                      subjectName: g.subject,     // (opcional)
                     ),
                   ),
                 );

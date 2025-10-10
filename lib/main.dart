@@ -1,3 +1,4 @@
+// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -15,22 +16,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'pages/login_page.dart';
 import 'pages/dashboard_page.dart';
 
-Future<void> main() async {
+void main() {
+  // Solo aseguramos el binding y arrancamos la app rápido
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Hive
-  final dir = await pp.getApplicationDocumentsDirectory();
-  await Hive.initFlutter(dir.path);
-  await Hive.openBox('sessions');
-  await Hive.openBox('groups');
-
-  // Locale
-  await initializeDateFormatting('es_MX');
-  Intl.defaultLocale = 'es_MX';
-
-  // Firebase
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
   runApp(const AsistenciasApp());
 }
 
@@ -42,25 +30,45 @@ class AsistenciasApp extends StatefulWidget {
 
 class _AsistenciasAppState extends State<AsistenciasApp> {
   final _storage = const FlutterSecureStorage();
+
+  // Estados de bootstrap
+  late final Future<void> _bootstrap;
   bool _triedAutoLogin = false;
 
   @override
   void initState() {
     super.initState();
-    _autoLoginIfNeeded();
+    _bootstrap = _initServices(); // inicia la pesada en segundo plano
+  }
+
+  // Toda la inicialización pesada aquí (después de pintar el primer frame)
+  Future<void> _initServices() async {
+    // Hive
+    final dir = await pp.getApplicationDocumentsDirectory();
+    await Hive.initFlutter(dir.path);
+    await Hive.openBox('sessions');
+    await Hive.openBox('groups');
+
+    // Locale
+    await initializeDateFormatting('es_MX');
+    Intl.defaultLocale = 'es_MX';
+
+    // Firebase
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+
+    // Auto-login silencioso (si procede)
+    await _autoLoginIfNeeded();
   }
 
   Future<void> _autoLoginIfNeeded() async {
-    // Si ya hay sesión activa, no hacemos nada.
     if (FirebaseAuth.instance.currentUser != null) {
-      setState(() => _triedAutoLogin = true);
+      _triedAutoLogin = true;
       return;
     }
-
-    // Lee credenciales guardadas (si existen) y prueba login silencioso.
     final email = await _storage.read(key: 'auth_email');
-    final pass  = await _storage.read(key: 'auth_password');
-
+    final pass = await _storage.read(key: 'auth_password');
     if (email != null && pass != null) {
       try {
         await FirebaseAuth.instance.signInWithEmailAndPassword(
@@ -68,18 +76,21 @@ class _AsistenciasAppState extends State<AsistenciasApp> {
           password: pass,
         );
       } catch (_) {
-        // Si falla, seguimos a LoginPage normal.
+        // si falla, seguimos a LoginPage
       }
     }
-    setState(() => _triedAutoLogin = true);
+    _triedAutoLogin = true;
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Sistema de Asistencia - CETIS',
+      title: 'Asistencias - CETIS 31',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xFFB71C1C)),
+      theme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: const Color(0xFFB71C1C),
+      ),
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
@@ -87,25 +98,39 @@ class _AsistenciasAppState extends State<AsistenciasApp> {
       ],
       supportedLocales: const [Locale('es', 'MX'), Locale('en', 'US')],
       locale: const Locale('es', 'MX'),
-      home: !_triedAutoLogin
-          ? const Scaffold(body: Center(child: CircularProgressIndicator()))
-          : StreamBuilder<User?>(
-              stream: FirebaseAuth.instance.authStateChanges(),
-              builder: (context, s) {
-                if (s.connectionState == ConnectionState.waiting) {
-                  return const Scaffold(body: Center(child: CircularProgressIndicator()));
-                }
-                final user = s.data;
-                if (user == null) return const LoginPage();
+      home: FutureBuilder<void>(
+        future: _bootstrap,
+        builder: (context, snap) {
+          // Mientras inicializa: loader muy ligero
+          if (snap.connectionState != ConnectionState.done ||
+              !_triedAutoLogin) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
 
-                final teacherName =
-                    user.displayName?.trim().isNotEmpty == true
-                        ? user.displayName!
-                        : (user.email?.split('@').first ?? 'Docente');
+          // Ya inicializado: nos enganchamos al authState
+          return StreamBuilder<User?>(
+            stream: FirebaseAuth.instance.authStateChanges(),
+            builder: (context, s) {
+              if (s.connectionState == ConnectionState.waiting) {
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final user = s.data;
+              if (user == null) return const LoginPage();
 
-                return DashboardPage(teacherName: teacherName);
-              },
-            ),
+              final teacherName =
+                  user.displayName?.trim().isNotEmpty == true
+                      ? user.displayName!
+                      : (user.email?.split('@').first ?? 'Docente');
+
+              return DashboardPage(teacherName: teacherName);
+            },
+          );
+        },
+      ),
     );
   }
 }
