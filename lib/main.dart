@@ -9,15 +9,16 @@ import 'package:intl/date_symbol_data_local.dart';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'pages/login_page.dart';
-import 'pages/dashboard_page.dart';
+import 'pages/admin_home_page.dart';
+import 'pages/teacher_home_page.dart';
 
 void main() {
-  // Solo aseguramos el binding y arrancamos la app rápido
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const AsistenciasApp());
 }
@@ -31,34 +32,28 @@ class AsistenciasApp extends StatefulWidget {
 class _AsistenciasAppState extends State<AsistenciasApp> {
   final _storage = const FlutterSecureStorage();
 
-  // Estados de bootstrap
   late final Future<void> _bootstrap;
   bool _triedAutoLogin = false;
 
   @override
   void initState() {
     super.initState();
-    _bootstrap = _initServices(); // inicia la pesada en segundo plano
+    _bootstrap = _initServices();
   }
 
-  // Toda la inicialización pesada aquí (después de pintar el primer frame)
   Future<void> _initServices() async {
-    // Hive
     final dir = await pp.getApplicationDocumentsDirectory();
     await Hive.initFlutter(dir.path);
     await Hive.openBox('sessions');
     await Hive.openBox('groups');
 
-    // Locale
     await initializeDateFormatting('es_MX');
     Intl.defaultLocale = 'es_MX';
 
-    // Firebase
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
 
-    // Auto-login silencioso (si procede)
     await _autoLoginIfNeeded();
   }
 
@@ -75,9 +70,7 @@ class _AsistenciasAppState extends State<AsistenciasApp> {
           email: email,
           password: pass,
         );
-      } catch (_) {
-        // si falla, seguimos a LoginPage
-      }
+      } catch (_) {}
     }
     _triedAutoLogin = true;
   }
@@ -101,7 +94,6 @@ class _AsistenciasAppState extends State<AsistenciasApp> {
       home: FutureBuilder<void>(
         future: _bootstrap,
         builder: (context, snap) {
-          // Mientras inicializa: loader muy ligero
           if (snap.connectionState != ConnectionState.done ||
               !_triedAutoLogin) {
             return const Scaffold(
@@ -109,7 +101,6 @@ class _AsistenciasAppState extends State<AsistenciasApp> {
             );
           }
 
-          // Ya inicializado: nos enganchamos al authState
           return StreamBuilder<User?>(
             stream: FirebaseAuth.instance.authStateChanges(),
             builder: (context, s) {
@@ -118,15 +109,42 @@ class _AsistenciasAppState extends State<AsistenciasApp> {
                   body: Center(child: CircularProgressIndicator()),
                 );
               }
+
               final user = s.data;
               if (user == null) return const LoginPage();
 
-              final teacherName =
-                  user.displayName?.trim().isNotEmpty == true
-                      ? user.displayName!
-                      : (user.email?.split('@').first ?? 'Docente');
+              // 🔹 Recuperar el rol desde Firestore
+              return FutureBuilder<DocumentSnapshot>(
+                future: FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(user.uid)
+                    .get(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Scaffold(
+                      body: Center(child: CircularProgressIndicator()),
+                    );
+                  }
 
-              return DashboardPage(teacherName: teacherName);
+                  if (!snapshot.data!.exists) {
+                    return const Scaffold(
+                      body: Center(
+                        child: Text(
+                          'Tu cuenta no tiene rol asignado. Contacta con el administrador.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    );
+                  }
+
+                  final role = snapshot.data!['role'];
+                  if (role == 'admin') {
+                    return const AdminHomePage();
+                  } else {
+                    return const TeacherHomePage();
+                  }
+                },
+              );
             },
           );
         },

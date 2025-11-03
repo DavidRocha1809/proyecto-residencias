@@ -6,8 +6,7 @@ enum _St { present, late, absent }
 class EditAttendancePage extends StatefulWidget {
   const EditAttendancePage({
     super.key,
-    required this.groupId,
-    required this.docId,      // yyyy-MM-dd
+    required this.docId,      // groupId_fecha
     required this.subject,
     required this.groupName,
     required this.start,
@@ -16,7 +15,6 @@ class EditAttendancePage extends StatefulWidget {
     required this.records,    // [{studentId,name,status}]
   });
 
-  final String groupId;
   final String docId;
   final String subject;
   final String groupName;
@@ -92,15 +90,15 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
               })
           .toList();
 
+      // ✅ Ajuste: ya no se usa groupId
       await AttendanceService.instance.updateSessionById(
-        groupId: widget.groupId,
         docId: widget.docId,
         records: payload,
       );
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cambios guardados')),
+        const SnackBar(content: Text('Cambios guardados correctamente')),
       );
       Navigator.pop(context, true);
     } catch (e) {
@@ -184,8 +182,8 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
                 const SizedBox(width: 8),
                 if (widget.start.isNotEmpty || widget.end.isNotEmpty)
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(
                       color: surfaceHigh,
                       borderRadius: BorderRadius.circular(12),
@@ -253,7 +251,7 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
                                   setState(() => r.status = _St.absent),
                             ),
                             const Spacer(),
-                            // etiqueta de estado (texto como en tu UI)
+                            // etiqueta de estado
                             Row(
                               children: [
                                 Icon(
@@ -310,8 +308,7 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
           Container(
             width: 10,
             height: 10,
-            decoration:
-                BoxDecoration(color: color, shape: BoxShape.circle),
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 8),
           Text(

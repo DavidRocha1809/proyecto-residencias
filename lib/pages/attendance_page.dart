@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models.dart';
-import '../local_groups.dart' as LG;
 import '../local_store.dart';
 import '../services/attendance_service.dart';
 
@@ -10,6 +11,7 @@ class AttendancePage extends StatefulWidget {
   static const route = '/attendance';
   final GroupClass groupClass;
   final DateTime initialDate;
+
   const AttendancePage({
     super.key,
     required this.groupClass,
@@ -25,18 +27,44 @@ class _AttendancePageState extends State<AttendancePage> {
   List<Student> _students = [];
   bool _loading = true;
   String _query = '';
+  final _firestore = FirebaseFirestore.instance;
+  final _auth = FirebaseAuth.instance;
 
   @override
   void initState() {
     super.initState();
     _date = widget.initialDate;
-    _loadStudents();
+    _loadStudentsFromFirestore();
   }
 
-  Future<void> _loadStudents() async {
+  // 🔹 Cargar alumnos directamente desde Firestore (no desde LocalGroups)
+  Future<void> _loadStudentsFromFirestore() async {
     try {
-      final gid = LG.groupKeyOf(widget.groupClass);
-      final list = await LG.LocalGroups.listStudents(groupId: gid);
+      setState(() {
+        _loading = true;
+      });
+
+      final uid = _auth.currentUser?.uid;
+      if (uid == null) throw Exception('Usuario no autenticado.');
+
+      // Buscar grupo por nombre
+      final groupQuery = await _firestore
+          .collection('groups')
+          .where('name', isEqualTo: widget.groupClass.groupName)
+          .limit(1)
+          .get();
+
+      if (groupQuery.docs.isEmpty) {
+        throw Exception('No se encontró el grupo en Firestore.');
+      }
+
+      final doc = groupQuery.docs.first;
+      final studentNames = List<String>.from(doc['students'] ?? []);
+
+      final list = studentNames
+          .map((name) => Student(id: name, name: name))
+          .toList();
+
       if (!mounted) return;
       setState(() {
         _students = list
@@ -91,15 +119,19 @@ class _AttendancePageState extends State<AttendancePage> {
 
   Future<void> _save() async {
     try {
-      // 1) local (Hive)
+      final uid = _auth.currentUser?.uid;
+      if (uid == null) throw Exception('Usuario no autenticado.');
+
+      // Guardar también localmente (opcional)
       await LocalStore.saveTodaySession(
         groupClass: widget.groupClass,
         date: _date,
         students: _students,
       );
-      // 2) Firestore
+
+      // Guardar en Firestore
       await AttendanceService.instance.saveSessionToFirestore(
-        groupId: LG.groupKeyOf(widget.groupClass),
+        groupId: widget.groupClass.groupName, // usamos el nombre del grupo
         subject: widget.groupClass.subject,
         groupName: widget.groupClass.groupName,
         start: _fmtTime(widget.groupClass.start),
@@ -167,7 +199,7 @@ class _AttendancePageState extends State<AttendancePage> {
             child: FilledButton.icon(
               onPressed: _students.isEmpty ? null : _setAllPresent,
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFD32F2F), // rojo del diseño
+                backgroundColor: const Color(0xFFD32F2F),
                 minimumSize: const Size(10, 38),
                 padding: const EdgeInsets.symmetric(horizontal: 12),
               ),
@@ -177,7 +209,6 @@ class _AttendancePageState extends State<AttendancePage> {
           ),
         ],
       ),
-
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.all(12),
         child: SizedBox(
@@ -185,7 +216,7 @@ class _AttendancePageState extends State<AttendancePage> {
           child: FilledButton.icon(
             onPressed: _students.isEmpty ? null : _save,
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFD32F2F), // rojo
+              backgroundColor: const Color(0xFFD32F2F),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -195,12 +226,10 @@ class _AttendancePageState extends State<AttendancePage> {
           ),
         ),
       ),
-
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // barra de contadores estilo chips
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
                   child: Wrap(
@@ -230,8 +259,6 @@ class _AttendancePageState extends State<AttendancePage> {
                     ],
                   ),
                 ),
-
-                // buscador
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                   child: TextField(
@@ -243,27 +270,11 @@ class _AttendancePageState extends State<AttendancePage> {
                     ),
                   ),
                 ),
-
-                // fecha (tap para cambiar)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: _pickDate,
-                      icon: const Icon(Icons.event),
-                      label: Text('Fecha: ${df.format(_date)}'),
-                    ),
-                  ),
-                ),
-
-                // lista
                 Expanded(
                   child: filtered.isEmpty
                       ? const Center(child: Text('Sin alumnos'))
                       : ListView.separated(
-                          padding:
-                              const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                           itemCount: filtered.length,
                           separatorBuilder: (_, __) =>
                               const SizedBox(height: 8),
@@ -286,7 +297,7 @@ class _AttendancePageState extends State<AttendancePage> {
   }
 }
 
-// ===== Widgets de UI =====
+// ===== UI components (idénticos a los tuyos previos) =====
 
 class _CounterChip extends StatelessWidget {
   final Color color;
@@ -347,23 +358,16 @@ class _StudentCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // nombre + id
-            Text(
-              student.name,
-              style:
-                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
+            Text(student.name,
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 4),
-            Text(
-              'ID: ${student.id}',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: muted),
-            ),
+            Text('ID: ${student.id}',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: muted)),
             const SizedBox(height: 10),
-
-            // 3 botones grandes
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
@@ -373,14 +377,12 @@ class _StudentCard extends StatelessWidget {
                   selected: student.status == AttendanceStatus.present,
                   onTap: () => onStatus(AttendanceStatus.present),
                 ),
-                const SizedBox(width: 12),
                 _StatusButton(
                   icon: Icons.schedule,
                   color: lateColor,
                   selected: student.status == AttendanceStatus.late,
                   onTap: () => onStatus(AttendanceStatus.late),
                 ),
-                const SizedBox(width: 12),
                 _StatusButton(
                   icon: Icons.close,
                   color: absentColor,
@@ -389,9 +391,7 @@ class _StudentCard extends StatelessWidget {
                 ),
               ],
             ),
-
             const SizedBox(height: 10),
-            // etiqueta de estado
             Row(
               children: [
                 const Icon(Icons.radio_button_unchecked, size: 18),

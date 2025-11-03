@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../local_groups.dart' as LG;
 import '../services/attendance_service.dart';
 import '../models.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_store.dart';
 
 enum ReportPeriod { daily, weekly, monthly }
@@ -22,19 +22,12 @@ class _ReportsPageState extends State<ReportsPage> {
   DateTime _anchor = DateTime.now();
 
   DateTimeRange? _range;
-  String? _selectedSubject;
-
   bool _loading = true;
-  final List<GroupClass> _allGroups = [];
   final List<Map<String, dynamic>> _rows = [];
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialGroup != null) {
-      _allGroups.add(widget.initialGroup!);
-      _selectedSubject = null;
-    }
     _recomputeRange();
     _load();
   }
@@ -81,25 +74,28 @@ class _ReportsPageState extends State<ReportsPage> {
     });
 
     try {
-      final List<GroupClass> list =
-          _selectedSubject == null
-              ? _allGroups
-              : _allGroups.where((g) => g.subject == _selectedSubject).toList();
+      // 🔹 Leer todas las sesiones del docente desde Firestore
+      final sessions = await AttendanceService.instance.listSessions(
+        groupId: widget.initialGroup?.groupName ?? '',
+        limit: 500,
+      );
 
-      for (final g in list) {
-        final gid = LG.groupKeyOf(g);
-        final items = await AttendanceService.instance.listSessions(
-          groupId: gid,
-          limit: 500,
-          dateFrom: _range?.start,
-          dateTo: _range?.end,
-        );
-        _rows.addAll(items);
-      }
+      // 🔹 Filtrar las que estén dentro del rango seleccionado
+      final filtered = sessions.where((s) {
+        final date = (s['date'] is Timestamp)
+            ? (s['date'] as Timestamp).toDate()
+            : DateTime.tryParse(s['date'].toString()) ?? DateTime.now();
+        return date.isAfter(_range!.start.subtract(const Duration(days: 1))) &&
+            date.isBefore(_range!.end.add(const Duration(days: 1)));
+      }).toList();
+
+      setState(() {
+        _rows.addAll(filtered);
+      });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudieron cargar reportes: $e')),
+        SnackBar(content: Text('Error al cargar reportes: $e')),
       );
     } finally {
       if (!mounted) return;
@@ -115,16 +111,23 @@ class _ReportsPageState extends State<ReportsPage> {
         );
         return;
       }
+
       final title = switch (_period) {
         ReportPeriod.daily => 'Reporte Diario',
         ReportPeriod.weekly => 'Reporte Semanal',
         ReportPeriod.monthly => 'Reporte Mensual',
       };
+
       await LocalStore.exportPeriodPdf(
         from: _range!.start,
         to: _range!.end,
         rows: List<Map<String, dynamic>>.from(_rows),
         titulo: title,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('PDF "$title" generado correctamente')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -202,36 +205,41 @@ class _ReportsPageState extends State<ReportsPage> {
           ),
           const SizedBox(height: 8),
           Expanded(
-            child:
-                _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _rows.isEmpty
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _rows.isEmpty
                     ? const Center(child: Text('Sin registros'))
                     : ListView.separated(
-                      itemCount: _rows.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (_, i) {
-                        final r = _rows[i];
-                        final dt =
-                            DateTime.tryParse(
-                              (r['date'] ?? r['id']) as String? ?? '',
-                            ) ??
-                            DateTime.now();
-                        final subj = (r['subject'] ?? '').toString();
-                        final gname = (r['groupName'] ?? '').toString();
-                        final present = r['present'] ?? r['presentCount'] ?? 0;
-                        final late = r['late'] ?? 0;
-                        final absent = r['absent'] ?? 0;
-                        final total = r['total'] ?? (present + late + absent);
+                        itemCount: _rows.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (_, i) {
+                          final r = _rows[i];
+                          final dt = (r['date'] is Timestamp)
+                              ? (r['date'] as Timestamp).toDate()
+                              : DateTime.tryParse(r['date'].toString()) ??
+                                  DateTime.now();
 
-                        return ListTile(
-                          title: Text('$subj — $gname'),
-                          subtitle: Text(
-                            'Fecha: ${df.format(dt)}  •  P: $present  R: $late  A: $absent  •  Total: $total',
-                          ),
-                        );
-                      },
-                    ),
+                          final subj = (r['subject'] ?? '').toString();
+                          final gname = (r['groupName'] ?? '').toString();
+                          final present = r['present'] ?? 0;
+                          final late = r['late'] ?? 0;
+                          final absent = r['absent'] ?? 0;
+                          final total = r['total'] ?? (present + late + absent);
+
+                          return ListTile(
+                            title: Text(
+                              subj.isEmpty
+                                  ? 'Grupo: $gname'
+                                  : '$subj — $gname',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            subtitle: Text(
+                              'Fecha: ${df.format(dt)}  •  P: $present  R: $late  A: $absent  •  Total: $total',
+                            ),
+                          );
+                        },
+                      ),
           ),
         ],
       ),

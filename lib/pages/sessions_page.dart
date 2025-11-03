@@ -34,8 +34,7 @@ class _SessionsPageState extends State<SessionsPage> {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => AttendanceHistoryPage(
-              groupId: LG.groupKeyOf(g),   // ✅ lo que pide el constructor
-              subjectName: g.subject,      // (opcional) para mostrar
+              groupClass: g,   // (opcional) para mostrar
             ),
           ),
         );
@@ -69,8 +68,7 @@ class _SessionsPageState extends State<SessionsPage> {
                   context,
                   MaterialPageRoute(
                     builder: (_) => AttendanceHistoryPage(
-                      groupId: LG.groupKeyOf(g), // ✅ clave del grupo
-                      subjectName: g.subject,     // (opcional)
+                      groupClass: g,    // (opcional)
                     ),
                   ),
                 );

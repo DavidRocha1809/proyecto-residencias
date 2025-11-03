@@ -8,6 +8,7 @@ class AttendanceService {
   FirebaseFirestore get _db => FirebaseFirestore.instance;
   String get _uid => FirebaseAuth.instance.currentUser!.uid;
 
+  /// Guarda una sesión de asistencia.
   Future<void> saveSessionToFirestore({
     required String groupId,
     required String subject,
@@ -17,7 +18,7 @@ class AttendanceService {
     required DateTime date,
     required List<Map<String, dynamic>> records,
   }) async {
-    final docId = '${date.year.toString().padLeft(4, '0')}-'
+    final docId = '${groupId}_${date.year.toString().padLeft(4, '0')}-'
         '${date.month.toString().padLeft(2, '0')}-'
         '${date.day.toString().padLeft(2, '0')}';
 
@@ -25,8 +26,6 @@ class AttendanceService {
         .collection('teachers')
         .doc(_uid)
         .collection('attendance')
-        .doc(groupId)
-        .collection('sessions')
         .doc(docId);
 
     await ref.set({
@@ -36,7 +35,7 @@ class AttendanceService {
       'groupName': groupName,
       'start': start,
       'end': end,
-      'date': docId,
+      'date': Timestamp.fromDate(date),
       'records': records,
       'present': records.where((r) => r['status'] == 'present').length,
       'late': records.where((r) => r['status'] == 'late').length,
@@ -46,59 +45,34 @@ class AttendanceService {
     }, SetOptions(merge: true));
   }
 
+  /// Lista todas las sesiones de asistencia de un grupo
   Future<List<Map<String, dynamic>>> listSessions({
     required String groupId,
-    int limit = 500,
+    int limit = 100,
     DateTime? dateFrom,
     DateTime? dateTo,
   }) async {
-    var q = _db
+    final snap = await _db
         .collection('teachers')
         .doc(_uid)
         .collection('attendance')
-        .doc(groupId)
-        .collection('sessions')
-        .orderBy('date', descending: true);
+        .where('groupId', isEqualTo: groupId)
+        .orderBy('date', descending: true)
+        .limit(limit)
+        .get();
 
-    if (dateFrom != null) {
-      final f = '${dateFrom.year.toString().padLeft(4, '0')}-'
-          '${dateFrom.month.toString().padLeft(2, '0')}-'
-          '${dateFrom.day.toString().padLeft(2, '0')}';
-      q = q.where('date', isGreaterThanOrEqualTo: f);
-    }
-    if (dateTo != null) {
-      final t = '${dateTo.year.toString().padLeft(4, '0')}-'
-          '${dateTo.month.toString().padLeft(2, '0')}-'
-          '${dateTo.day.toString().padLeft(2, '0')}';
-      q = q.where('date', isLessThanOrEqualTo: t);
-    }
-
-    final snap = await q.limit(limit).get();
     return snap.docs
         .map((d) => {'docId': d.id, ...d.data()})
         .cast<Map<String, dynamic>>()
         .toList();
   }
 
-  /// Alias de compatibilidad (lo usa el PDF general).
-  Future<List<Map<String, dynamic>>> listSessionsDetailed({
-    required String groupId,
-    required DateTime dateFrom,
-    required DateTime dateTo,
-  }) {
-    return listSessions(
-      groupId: groupId,
-      dateFrom: dateFrom,
-      dateTo: dateTo,
-      limit: 1000,
-    );
-  }
-
+  /// Devuelve una sesión específica por grupo y fecha.
   Future<Map<String, dynamic>?> getSessionByGroupAndDate({
     required String groupId,
     required DateTime date,
   }) async {
-    final docId = '${date.year.toString().padLeft(4, '0')}-'
+    final docId = '${groupId}_${date.year.toString().padLeft(4, '0')}-'
         '${date.month.toString().padLeft(2, '0')}-'
         '${date.day.toString().padLeft(2, '0')}';
 
@@ -106,8 +80,6 @@ class AttendanceService {
         .collection('teachers')
         .doc(_uid)
         .collection('attendance')
-        .doc(groupId)
-        .collection('sessions')
         .doc(docId);
 
     final d = await ref.get();
@@ -115,8 +87,8 @@ class AttendanceService {
     return {'docId': d.id, ...d.data()!};
   }
 
+  /// Actualiza una sesión existente
   Future<void> updateSessionById({
-    required String groupId,
     required String docId,
     required List<Map<String, dynamic>> records,
   }) async {
@@ -124,8 +96,6 @@ class AttendanceService {
         .collection('teachers')
         .doc(_uid)
         .collection('attendance')
-        .doc(groupId)
-        .collection('sessions')
         .doc(docId);
 
     await ref.update({
@@ -138,16 +108,12 @@ class AttendanceService {
     });
   }
 
-  Future<void> deleteSessionById({
-    required String groupId,
-    required String docId,
-  }) async {
+  /// Elimina una sesión
+  Future<void> deleteSessionById({required String docId}) async {
     final ref = _db
         .collection('teachers')
         .doc(_uid)
         .collection('attendance')
-        .doc(groupId)
-        .collection('sessions')
         .doc(docId);
     await ref.delete();
   }

@@ -29,10 +29,11 @@ class AttendancePdf {
       for (final s in students) s.id: _Stu(id: s.id, name: s.name),
     };
 
-    final sessions = await AttendanceService.instance.listSessionsDetailed(
+    final sessions = await AttendanceService.instance.listSessions(
       groupId: groupId,
       dateFrom: from,
       dateTo: to,
+      limit: 1000,
     );
 
     for (final sess in sessions) {
