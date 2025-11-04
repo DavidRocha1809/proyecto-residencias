@@ -62,7 +62,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
         final rows = sheet.rows;
         if (rows.isEmpty) continue;
 
-        // 🔹 Buscar el nombre del grupo dentro de las primeras filas (ejemplo: “GRUPO: 1B”)
+        // 🔹 Buscar el nombre del grupo dentro de las primeras filas
         String groupName = 'Grupo sin nombre';
         for (var row in rows.take(20)) {
           for (var cell in row) {
@@ -76,42 +76,42 @@ class _AdminHomePageState extends State<AdminHomePage> {
           }
         }
 
-        // 🔍 Buscar el índice donde empieza la lista de alumnos
+        // 🔍 Buscar encabezados: “NO. CONTROL” y “NOMBRE”
         int startIndex = -1;
+        int colMatricula = -1;
+        int colNombre = -1;
+
         for (int i = 0; i < rows.length; i++) {
-          final rowText = rows[i]
-              .map((c) => (c?.value?.toString() ?? '').toLowerCase())
-              .join(' ');
-          if (rowText.contains('nombre') ||
-              rowText.contains('alumno') ||
-              rowText.contains('matrícula') ||
-              rowText.contains('no. control')) {
+          final row = rows[i];
+          for (int j = 0; j < row.length; j++) {
+            final text = (row[j]?.value?.toString().trim().toLowerCase() ?? '');
+            if (text.contains('no. control')) colMatricula = j;
+            if (text == 'nombre' || text.contains('nombre')) colNombre = j;
+          }
+          if (colMatricula != -1 && colNombre != -1) {
             startIndex = i + 1;
             break;
           }
         }
 
-        if (startIndex == -1) continue;
+        if (startIndex == -1 || colMatricula == -1 || colNombre == -1) continue;
 
-        // 🔹 Leer alumnos a partir del índice detectado
-        List<String> students = [];
+        // 🔹 Leer alumnos desde el Excel
+        List<Map<String, dynamic>> students = [];
         for (int i = startIndex; i < rows.length; i++) {
           final row = rows[i];
           if (row.isEmpty) continue;
 
-          // Buscar el nombre del alumno (por lo general está en la columna 2 o 3)
-          String? name;
-          for (final cell in row) {
-            final val = cell?.value?.toString().trim();
-            if (val != null && val.isNotEmpty && val.contains(' ')) {
-              name = val;
-              break;
-            }
-          }
+          final matricula =
+              row.length > colMatricula ? row[colMatricula]?.value?.toString().trim() : '';
+          final nombre =
+              row.length > colNombre ? row[colNombre]?.value?.toString().trim() : '';
 
-          if (name != null && name.isNotEmpty) {
-            if (name.toLowerCase().contains('total')) break;
-            students.add(name);
+          if ((matricula?.isNotEmpty ?? false) && (nombre?.isNotEmpty ?? false)) {
+            students.add({
+              'name': nombre,
+              'matricula': matricula,
+            });
           }
         }
 
@@ -119,7 +119,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
         if (students.isNotEmpty) {
           alumnosDetectados = true;
           await FirebaseFirestore.instance.collection('groups').add({
-            'name': groupName, // ✅ ahora guarda el nombre del grupo real, como “1B”
+            'name': groupName, // ❗ mantenemos tu lógica original
             'uploaded_by': FirebaseAuth.instance.currentUser!.uid,
             'students': students,
             'created_at': Timestamp.now(),
@@ -240,11 +240,12 @@ class _AdminHomePageState extends State<AdminHomePage> {
                       itemBuilder: (context, index) {
                         final group = docs[index];
                         final students =
-                            List<String>.from(group['students'] ?? []);
+                            List<Map<String, dynamic>>.from(group['students'] ?? []);
                         return ListTile(
                           title: Text(group['name'] ?? 'Sin nombre'),
                           subtitle: Text(
-                              'Alumnos: ${students.length} • Cargado el ${group['created_at'].toDate().toString().substring(0, 16)}'),
+                            'Alumnos: ${students.length} • Cargado el ${group['created_at'].toDate().toString().substring(0, 16)}',
+                          ),
                           trailing: IconButton(
                             icon: const Icon(Icons.delete, color: Colors.red),
                             onPressed: () => _deleteGroup(group.id),

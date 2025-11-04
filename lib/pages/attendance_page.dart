@@ -37,7 +37,7 @@ class _AttendancePageState extends State<AttendancePage> {
     _loadStudentsFromFirestore();
   }
 
-  // 🔹 Cargar alumnos directamente desde Firestore (no desde LocalGroups)
+  // 🔹 Cargar alumnos directamente desde Firestore
   Future<void> _loadStudentsFromFirestore() async {
     try {
       setState(() {
@@ -59,11 +59,22 @@ class _AttendancePageState extends State<AttendancePage> {
       }
 
       final doc = groupQuery.docs.first;
-      final studentNames = List<String>.from(doc['students'] ?? []);
+      final rawStudents = doc['students'] ?? [];
 
-      final list = studentNames
-          .map((name) => Student(id: name, name: name))
-          .toList();
+      // ✅ Detectar y convertir correctamente los alumnos
+      final List<Student> list = [];
+      if (rawStudents is List) {
+        for (var s in rawStudents) {
+          if (s is String) {
+            list.add(Student(id: '', name: s));
+          } else if (s is Map) {
+            list.add(Student(
+              id: s['matricula']?.toString() ?? '',
+              name: s['name']?.toString() ?? '',
+            ));
+          }
+        }
+      }
 
       if (!mounted) return;
       setState(() {
@@ -84,12 +95,11 @@ class _AttendancePageState extends State<AttendancePage> {
   String _fmtTime(TimeOfDay t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
-  Color get _presentColor => const Color(0xFF2E7D32); // verde
-  Color get _lateColor => const Color(0xFFF9A825); // ámbar
-  Color get _absentColor => const Color(0xFFC62828); // rojo
+  Color get _presentColor => const Color(0xFF2E7D32);
+  Color get _lateColor => const Color(0xFFF9A825);
+  Color get _absentColor => const Color(0xFFC62828);
   Color get _muted => Theme.of(context).colorScheme.outlineVariant;
 
-  // ===== contadores =====
   int get _countPresent =>
       _students.where((s) => s.status == AttendanceStatus.present).length;
   int get _countLate =>
@@ -106,32 +116,19 @@ class _AttendancePageState extends State<AttendancePage> {
     });
   }
 
-  Future<void> _pickDate() async {
-    final res = await showDatePicker(
-      context: context,
-      initialDate: _date,
-      firstDate: DateTime(_date.year - 1),
-      lastDate: DateTime(_date.year + 1),
-      locale: const Locale('es', 'MX'),
-    );
-    if (res != null) setState(() => _date = res);
-  }
-
   Future<void> _save() async {
     try {
       final uid = _auth.currentUser?.uid;
       if (uid == null) throw Exception('Usuario no autenticado.');
 
-      // Guardar también localmente (opcional)
       await LocalStore.saveTodaySession(
         groupClass: widget.groupClass,
         date: _date,
         students: _students,
       );
 
-      // Guardar en Firestore
       await AttendanceService.instance.saveSessionToFirestore(
-        groupId: widget.groupClass.groupName, // usamos el nombre del grupo
+        groupId: widget.groupClass.groupName,
         subject: widget.groupClass.subject,
         groupName: widget.groupClass.groupName,
         start: _fmtTime(widget.groupClass.start),
@@ -297,7 +294,7 @@ class _AttendancePageState extends State<AttendancePage> {
   }
 }
 
-// ===== UI components (idénticos a los tuyos previos) =====
+// ====== UI Components ======
 
 class _CounterChip extends StatelessWidget {
   final Color color;
@@ -362,11 +359,13 @@ class _StudentCard extends StatelessWidget {
                 style:
                     const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 4),
-            Text('ID: ${student.id}',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodyMedium
-                    ?.copyWith(color: muted)),
+            Text(
+              'Matrícula: ${student.id.isEmpty ? "—" : student.id}',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: muted),
+            ),
             const SizedBox(height: 10),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,

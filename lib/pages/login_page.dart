@@ -45,70 +45,88 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+  if (!_formKey.currentState!.validate()) return;
+  if (!mounted) return; // Previene actualizaciones en estado destruido
 
-    final email = _emailCtrl.text.trim();
-    final pass = _passCtrl.text;
+  setState(() {
+    _busy = true;
+    _error = null;
+  });
 
-    try {
-      UserCredential cred;
-      if (_mode == _Mode.signIn) {
-        cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: email,
-          password: pass,
-        );
-      } else {
-        cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-          email: email,
-          password: pass,
-        );
+  final email = _emailCtrl.text.trim();
+  final pass = _passCtrl.text;
 
-        // Solo nuevos usuarios → se crean como teacher por defecto
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(cred.user!.uid)
-            .set({
-          'email': email,
-          'name': _nameCtrl.text.trim(),
-          'role': 'teacher',
-        });
-      }
+  try {
+    UserCredential cred;
+    if (_mode == _Mode.signIn) {
+      cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: pass,
+      );
+    } else {
+      cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: email,
+        password: pass,
+      );
 
-      await _saveRemembered(email, pass);
+      // Solo nuevos usuarios → se crean como teacher por defecto
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(cred.user!.uid)
+          .set({
+        'email': email,
+        'name': _nameCtrl.text.trim(),
+        'role': 'teacher',
+      });
+    }
 
-      final uid = cred.user!.uid;
-      final snap =
-          await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    await _saveRemembered(email, pass);
 
-      if (!snap.exists) {
-        setState(() {
-          _error =
-              'Tu usuario no tiene rol asignado. Contacta con el administrador.';
-        });
-        await FirebaseAuth.instance.signOut();
-        return;
-      }
+    final uid = cred.user!.uid;
+    final snap =
+        await FirebaseFirestore.instance.collection('users').doc(uid).get();
 
-      final role = snap['role'];
+    if (!snap.exists) {
+      if (!mounted) return;
+      setState(() {
+        _error =
+            'Tu usuario no tiene rol asignado. Contacta con el administrador.';
+      });
+      await FirebaseAuth.instance.signOut();
+      return;
+    }
+
+    final role = snap['role'];
+
+    // 🔹 Asegúrate de que el widget sigue montado antes de navegar
+    if (!mounted) return;
+    setState(() => _busy = false);
+
+    // 🔹 Usa Future.microtask para permitir que Flutter libere el frame actual
+    Future.microtask(() {
+      if (!mounted) return;
       if (role == 'admin') {
         Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const AdminHomePage()));
+          MaterialPageRoute(builder: (_) => const AdminHomePage()),
+        );
       } else {
         Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const TeacherHomePage()));
+          MaterialPageRoute(builder: (_) => const TeacherHomePage()),
+        );
       }
-    } on FirebaseAuthException catch (e) {
-      setState(() => _error = e.message ?? e.code);
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      setState(() => _busy = false);
-    }
+    });
+  } on FirebaseAuthException catch (e) {
+    if (!mounted) return;
+    setState(() => _error = e.message ?? e.code);
+  } catch (e) {
+    if (!mounted) return;
+    setState(() => _error = e.toString());
+  } finally {
+    if (!mounted) return;
+    setState(() => _busy = false);
   }
+}
+
 
   Future<void> _resetPasswordPrompt() async {
     final emailController = TextEditingController(text: _emailCtrl.text);
