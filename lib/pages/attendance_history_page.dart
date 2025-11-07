@@ -1,237 +1,285 @@
+// lib/pages/attendance_history_page.dart
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
-import '../models.dart';
-import '../services/attendance_service.dart';
 import 'edit_attendance_page.dart';
-import 'reports_page.dart';
 
 class AttendanceHistoryPage extends StatefulWidget {
-  final GroupClass groupClass;
-
-  const AttendanceHistoryPage({super.key, required this.groupClass});
+  const AttendanceHistoryPage({super.key});
 
   @override
   State<AttendanceHistoryPage> createState() => _AttendanceHistoryPageState();
 }
 
 class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
-  bool _loading = true;
-  List<Map<String, dynamic>> _sessions = [];
-  String? _error;
+  final uid = FirebaseAuth.instance.currentUser!.uid;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadSessions();
-  }
+  DateTime _from = DateTime.now().subtract(const Duration(days: 30));
+  DateTime _to = DateTime.now();
 
-  Future<void> _loadSessions() async {
-    setState(() {
-      _loading = true;
-      _error = null;
+  // ============================================================
+  // 🔹 Obtiene todas las sesiones del profesor autenticado
+  // ============================================================
+  Stream<List<Map<String, dynamic>>> _getAllSessions() async* {
+    final firestore = FirebaseFirestore.instance;
+    final attendanceRef =
+        firestore.collection('teachers').doc(uid).collection('attendance');
+
+    final snap = await attendanceRef.get();
+    final allSessions = snap.docs.map((doc) {
+      final data = doc.data();
+      data['id'] = doc.id;
+      return data;
+    }).toList();
+
+    // 🔹 Filtrar por rango de fechas
+    final from = DateTime(_from.year, _from.month, _from.day);
+    final to = DateTime(_to.year, _to.month, _to.day);
+
+    final filtered = allSessions.where((s) {
+      final d = _safeParseDate(s['date']);
+      return !d.isBefore(from) && !d.isAfter(to);
+    }).toList();
+
+    // 🔹 Ordenar por fecha (más reciente primero)
+    filtered.sort((a, b) {
+      final aDate = _safeParseDate(a['date']);
+      final bDate = _safeParseDate(b['date']);
+      return bDate.compareTo(aDate);
     });
-    try {
-      final list = await AttendanceService.instance.listSessions(
-        groupId: widget.groupClass.groupName,
-        limit: 500,
-      );
-      setState(() => _sessions = list);
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      setState(() => _loading = false);
-    }
+
+    yield filtered;
   }
 
-  Future<void> _deleteSession(String docId) async {
+  // ============================================================
+  // 🔹 Funciones auxiliares
+  // ============================================================
+  DateTime _safeParseDate(dynamic value) {
+    if (value == null) return DateTime(0);
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) {
+      try {
+        return DateTime.parse(value);
+      } catch (_) {
+        final regex = RegExp(r'(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})');
+        final match = regex.firstMatch(value);
+        if (match != null) {
+          final day = int.tryParse(match.group(1)!);
+          final month = _monthFromSpanish(match.group(2)!);
+          final year = int.tryParse(match.group(3)!);
+          if (day != null && month != null && year != null) {
+            return DateTime(year, month, day);
+          }
+        }
+      }
+    }
+    return DateTime(0);
+  }
+
+  int? _monthFromSpanish(String name) {
+    const meses = {
+      'enero': 1,
+      'febrero': 2,
+      'marzo': 3,
+      'abril': 4,
+      'mayo': 5,
+      'junio': 6,
+      'julio': 7,
+      'agosto': 8,
+      'septiembre': 9,
+      'setiembre': 9,
+      'octubre': 10,
+      'noviembre': 11,
+      'diciembre': 12,
+    };
+    return meses[name.toLowerCase()];
+  }
+
+  Future<void> _pickFrom() async {
+    final r = await showDatePicker(
+      context: context,
+      initialDate: _from,
+      firstDate: DateTime(2023),
+      lastDate: DateTime.now(),
+      locale: const Locale('es', 'MX'),
+    );
+    if (r != null) setState(() => _from = r);
+  }
+
+  Future<void> _pickTo() async {
+    final r = await showDatePicker(
+      context: context,
+      initialDate: _to,
+      firstDate: DateTime(2023),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
+      locale: const Locale('es', 'MX'),
+    );
+    if (r != null) setState(() => _to = r);
+  }
+
+  // ============================================================
+  // 🔹 Eliminar registro
+  // ============================================================
+  Future<void> _deleteSession(
+      String docId, String groupName, String dateText) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Eliminar lista'),
-        content: const Text('¿Seguro que deseas eliminar esta lista de asistencia?'),
+        title: const Text('Eliminar registro'),
+        content: Text(
+          '¿Seguro que deseas eliminar la lista del grupo "$groupName" del $dateText?\n\nEsta acción no se puede deshacer.',
+        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar')),
           FilledButton.tonal(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Eliminar'),
-          ),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Eliminar')),
         ],
       ),
     );
-
     if (ok != true) return;
 
     try {
-      await AttendanceService.instance.deleteSessionById(docId: docId);
-      await _loadSessions();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Lista eliminada correctamente')));
+      await FirebaseFirestore.instance
+          .collection('teachers')
+          .doc(uid)
+          .collection('attendance')
+          .doc(docId)
+          .delete();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Registro eliminado correctamente.')),
+        );
+      }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error al eliminar: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al eliminar: $e')),
+        );
+      }
     }
   }
 
+  // ============================================================
+  // 🔹 UI
+  // ============================================================
   @override
   Widget build(BuildContext context) {
-    final df = DateFormat('yyyy-MM-dd');
+    final df = DateFormat('dd/MM/yyyy');
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Historial • ${widget.groupClass.groupName}'),
-        actions: [
-          IconButton(
-            tooltip: 'Actualizar',
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadSessions,
+      appBar: AppBar(title: const Text('Historial de asistencias')),
+      body: Column(
+        children: [
+          // 🔸 Filtros de fecha
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _pickFrom,
+                    icon: const Icon(Icons.event),
+                    label: Text('Desde: ${df.format(_from)}'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _pickTo,
+                    icon: const Icon(Icons.event_available),
+                    label: Text('Hasta: ${df.format(_to)}'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const Divider(height: 0),
+
+          // 🔸 Lista de sesiones
+          Expanded(
+            child: StreamBuilder<List<Map<String, dynamic>>>(
+              stream: _getAllSessions(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                  return const Center(
+                    child: Text('No hay sesiones en el rango seleccionado.'),
+                  );
+                }
+
+                final sessions = snapshot.data!;
+                return ListView.builder(
+                  itemCount: sessions.length,
+                  itemBuilder: (context, i) {
+                    final s = sessions[i];
+                    final date = _safeParseDate(s['date']);
+                    final formattedDate = (date.year == 0)
+                        ? 'Sin fecha'
+                        : '${date.day}/${date.month}/${date.year}';
+                    final groupName =
+                        s['groupName'] ?? s['groupId'] ?? 'Sin grupo';
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      child: ListTile(
+                        title: Text('$groupName — $formattedDate'),
+                        subtitle: Text('${s['start'] ?? ''} - ${s['end'] ?? ''}'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // ✏️ Editar
+                            IconButton(
+                              icon: const Icon(Icons.edit,
+                                  color: Colors.blueAccent),
+                              tooltip: 'Editar pase de lista',
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => EditAttendancePage(
+                                      docId: s['id'],
+                                      subject: s['groupName'] ?? '',
+                                      groupName: groupName,
+                                      start: s['start'] ?? '',
+                                      end: s['end'] ?? '',
+                                      date: date,
+                                      records: List<Map<String, dynamic>>.from(
+                                          s['records'] ?? []),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+
+                            // 🗑️ Eliminar
+                            IconButton(
+                              icon: const Icon(Icons.delete,
+                                  color: Colors.redAccent),
+                              tooltip: 'Eliminar registro',
+                              onPressed: () => _deleteSession(
+                                  s['id'], groupName, formattedDate),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
         ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text('Error: $_error'))
-              : _sessions.isEmpty
-                  ? const Center(child: Text('No hay registros de asistencia aún'))
-                  : ListView.separated(
-                      padding: const EdgeInsets.all(12),
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
-                      itemCount: _sessions.length,
-                      itemBuilder: (_, i) {
-                        final s = _sessions[i];
-                        final dateStr = (s['date'] ?? '').toString();
-                        final dt = DateTime.tryParse(dateStr) ?? DateTime.now();
-                        final subj = (s['subject'] ?? widget.groupClass.subject);
-                        final present = s['present'] ?? 0;
-                        final late = s['late'] ?? 0;
-                        final absent = s['absent'] ?? 0;
-                        final total = s['total'] ?? 0;
-                        final docId = s['docId'] ?? '';
-
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFDF0F1),
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.05),
-                                blurRadius: 4,
-                                offset: const Offset(0, 3),
-                              ),
-                            ],
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 10),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${df.format(dt)} • $subj',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 16,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'P: $present  •  R: $late  •  A: $absent  •  Total: $total',
-                                style: TextStyle(
-                                    color: Colors.grey.shade700, fontSize: 13),
-                              ),
-                              const SizedBox(height: 10),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      onPressed: () async {
-                                        final result =
-                                            await Navigator.push<bool>(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) => EditAttendancePage(
-                                              docId: docId,
-                                              subject: subj,
-                                              groupName:
-                                                  widget.groupClass.groupName,
-                                              start:
-                                                  widget.groupClass.start.format(context),
-                                              end:
-                                                  widget.groupClass.end.format(context),
-                                              date: dt,
-                                              records: List<Map<String, dynamic>>.from(
-                                                  s['records'] ?? const []),
-                                            ),
-                                          ),
-                                        );
-                                        if (result == true) {
-                                          await _loadSessions();
-                                        }
-                                      },
-                                      icon: const Icon(Icons.edit_outlined),
-                                      label: const Text('Editar'),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFFD32F2F),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: OutlinedButton.icon(
-                                      onPressed: () => _deleteSession(docId),
-                                      icon: const Icon(Icons.delete_outline),
-                                      label: const Text('Eliminar'),
-                                      style: OutlinedButton.styleFrom(
-                                        side: const BorderSide(color: Color(0xFFD32F2F)),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            Expanded(
-              child: FilledButton.icon(
-                icon: const Icon(Icons.assessment_outlined),
-                label: const Text('Ver reportes'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFD32F2F),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  minimumSize: const Size(double.infinity, 48),
-                ),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          ReportsPage(initialGroup: widget.groupClass),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

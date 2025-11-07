@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'login_page.dart';
 import 'attendance_page.dart';
-import 'grades_history_page.dart';
+import 'attendance_history_page.dart'; // ✅ cambiado
 import '../models.dart'; // ✅ Import necesario para usar GroupClass y Student
 
 class TeacherHomePage extends StatefulWidget {
@@ -71,9 +71,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           .doc(selected.id)
           .set({
         'group_id': selected.id,
-        'name': selected['name'], // nombre real
+        'name': selected['name'],
         'originalName': selected['name'],
-        'displayName': selected['name'], // nombre visual
+        'displayName': selected['name'],
         'students': selected['students'],
         'created_at': selected['created_at'],
         'uploaded_by': selected['uploaded_by'],
@@ -104,8 +104,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Eliminar todo')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Eliminar todo'),
+          ),
         ],
       ),
     );
@@ -115,21 +116,16 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     try {
       final teacherRef = _firestore.collection('teachers').doc(uid);
 
-      // 1️⃣ Eliminar grupo asignado
       await teacherRef.collection('assigned_groups').doc(groupId).delete();
 
-      // 2️⃣ Eliminar sesiones de asistencia
-      final sessionsRef = teacherRef
-          .collection('attendance')
-          .doc(groupName)
-          .collection('sessions');
+      final sessionsRef =
+          teacherRef.collection('attendance').doc(groupName).collection('sessions');
 
       final sessionsSnap = await sessionsRef.get();
       for (var doc in sessionsSnap.docs) {
         await sessionsRef.doc(doc.id).delete();
       }
 
-      // 3️⃣ Eliminar documento principal del grupo en attendance
       await teacherRef.collection('attendance').doc(groupName).delete();
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -148,7 +144,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
   }
 
-  // ✏️ Editar nombre visual (solo interfaz)
   Future<void> _editGroupName(String groupId, String currentDisplay) async {
     final controller = TextEditingController(text: currentDisplay);
 
@@ -239,8 +234,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
               const SizedBox(height: 16),
 
               if (_error != null)
-                Text(_error!,
-                    style: TextStyle(color: Colors.red.shade700, fontSize: 13)),
+                Text(_error!, style: TextStyle(color: Colors.red.shade700, fontSize: 13)),
 
               const SizedBox(height: 16),
 
@@ -273,7 +267,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                         final originalName = data['originalName'] ?? data['name'] ?? groupName;
                         final rawStudents = data['students'] ?? [];
 
-                        // ✅ Soporte para alumnos con matrícula
                         final List<Student> students = [];
                         if (rawStudents is List) {
                           for (var s in rawStudents) {
@@ -304,7 +297,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // 🔹 Encabezado y menú
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
@@ -372,7 +364,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                           MaterialPageRoute(
                                             builder: (_) => AttendancePage(
                                               groupClass: GroupClass(
-                                                groupName: originalName, // siempre el real
+                                                groupName: originalName,
                                                 subject: 'Materia no especificada',
                                                 start: const TimeOfDay(hour: 7, minute: 0),
                                                 end: const TimeOfDay(hour: 8, minute: 0),
@@ -401,17 +393,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                         Navigator.push(
                                           context,
                                           MaterialPageRoute(
-                                            builder: (_) => GradesHistoryPage(
-                                              groupClass: GroupClass(
-                                                groupName: originalName, // real
-                                                subject: 'Materia no especificada',
-                                                turno: 'Vespertino',
-                                                dia: '',
-                                                start: const TimeOfDay(hour: 7, minute: 0),
-                                                end: const TimeOfDay(hour: 8, minute: 0),
-                                                students: students,
-                                              ),
-                                            ),
+                                            builder: (_) => const AttendanceHistoryPage(), // ✅ corregido
                                           ),
                                         );
                                       },

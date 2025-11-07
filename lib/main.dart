@@ -18,6 +18,10 @@ import 'pages/login_page.dart';
 import 'pages/admin_home_page.dart';
 import 'pages/teacher_home_page.dart';
 
+// 🔹 Importamos las nuevas pantallas que usan rutas
+import 'pages/attendance_history_page.dart';
+import 'pages/edit_attendance_page.dart';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const AsistenciasApp());
@@ -91,6 +95,22 @@ class _AsistenciasAppState extends State<AsistenciasApp> {
       ],
       supportedLocales: const [Locale('es', 'MX'), Locale('en', 'US')],
       locale: const Locale('es', 'MX'),
+
+      // 🔹 Aquí se registran las rutas globales
+      routes: {
+        '/home': (context) => const TeacherHomePage(),
+        '/attendanceHistory': (context) => const AttendanceHistoryPage(),
+        '/editAttendance': (context) => EditAttendancePage(
+              docId: '',
+              subject: '',
+              groupName: '',
+              start: '',
+              end: '',
+              date: DateTime.now(),
+              records: [],
+            ),
+      },
+
       home: FutureBuilder<void>(
         future: _bootstrap,
         builder: (context, snap) {

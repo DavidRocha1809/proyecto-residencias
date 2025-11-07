@@ -1,18 +1,20 @@
+// lib/pages/edit_attendance_page.dart
 import 'package:flutter/material.dart';
-import '../services/attendance_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 enum _St { present, late, absent }
 
 class EditAttendancePage extends StatefulWidget {
   const EditAttendancePage({
     super.key,
-    required this.docId,      // groupId_fecha
+    required this.docId,
     required this.subject,
     required this.groupName,
     required this.start,
     required this.end,
     required this.date,
-    required this.records,    // [{studentId,name,status}]
+    required this.records,
   });
 
   final String docId;
@@ -30,23 +32,24 @@ class EditAttendancePage extends StatefulWidget {
 class _EditAttendancePageState extends State<EditAttendancePage> {
   late List<_Row> _rows;
   String _query = '';
+  bool _saving = false;
 
   @override
   void initState() {
     super.initState();
     _rows = widget.records
         .map((e) => _Row(
-              id: (e['studentId'] ?? '').toString(),
-              name: (e['name'] ?? '').toString(),
-              status: _parse((e['status'] ?? 'present').toString()),
+              id: e['studentId'] ?? '',
+              name: e['name'] ?? '',
+              status: _parseStatus(e['status']),
             ))
-        .toList()
-      ..sort((a, b) => a.name.compareTo(b.name));
+        .toList();
   }
 
-  // ===== Helpers =====
-  static _St _parse(String v) {
-    switch (v) {
+  _St _parseStatus(dynamic s) {
+    switch (s) {
+      case 'present':
+        return _St.present;
       case 'late':
         return _St.late;
       case 'absent':
@@ -56,219 +59,127 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
     }
   }
 
-  static String _statusToString(_St s) =>
-      s == _St.present ? 'present' : s == _St.late ? 'late' : 'absent';
-
-  List<_Row> get _filtered {
-    if (_query.trim().isEmpty) return _rows;
-    final q = _query.toLowerCase();
-    return _rows
-        .where((r) =>
-            r.name.toLowerCase().contains(q) || r.id.toLowerCase().contains(q))
-        .toList();
-  }
-
-  int get _present => _rows.where((r) => r.status == _St.present).length;
-  int get _late => _rows.where((r) => r.status == _St.late).length;
-  int get _absent => _rows.where((r) => r.status == _St.absent).length;
-
-  void _setAllPresent() {
-    setState(() {
-      for (final r in _rows) {
-        r.status = _St.present;
-      }
-    });
-  }
-
-  Future<void> _save() async {
-    try {
-      final payload = _rows
-          .map((r) => {
-                'studentId': r.id,
-                'name': r.name,
-                'status': _statusToString(r.status),
-              })
-          .toList();
-
-      // ✅ Ajuste: ya no se usa groupId
-      await AttendanceService.instance.updateSessionById(
-        docId: widget.docId,
-        records: payload,
-      );
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cambios guardados correctamente')),
-      );
-      Navigator.pop(context, true);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo guardar: $e')),
-      );
+  String _statusToString(_St s) {
+    switch (s) {
+      case _St.present:
+        return 'present';
+      case _St.late:
+        return 'late';
+      case _St.absent:
+        return 'absent';
     }
   }
 
-  // ===== UI =====
+  Future<void> _saveChanges() async {
+    setState(() => _saving = true);
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final firestore = FirebaseFirestore.instance;
+
+    final updatedRecords = _rows
+        .map((r) => {
+              'studentId': r.id,
+              'name': r.name,
+              'status': _statusToString(r.status),
+            })
+        .toList();
+
+    try {
+      await firestore
+          .collection('teachers')
+          .doc(uid)
+          .collection('attendance')
+          .doc(widget.docId)
+          .update({'records': updatedRecords});
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cambios guardados correctamente.')),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al guardar cambios: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final surfaceHigh = cs.surfaceVariant;
-    final surfaceLow = cs.surface;
+    final filtered = _rows
+        .where((r) =>
+            r.name.toLowerCase().contains(_query.toLowerCase()) ||
+            r.id.contains(_query))
+        .toList();
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('${widget.subject} • ${widget.groupName}'),
+        title: const Text('Editar'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: FilledButton(
-              onPressed: _setAllPresent,
-              child: const Text('Todos Presentes'),
+          if (_saving)
+            const Padding(
+              padding: EdgeInsets.all(10),
+              child: CircularProgressIndicator(strokeWidth: 2),
             ),
-          ),
         ],
       ),
       body: Column(
         children: [
-          // resumen chips
+          // 🔹 Buscador
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-            child: Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                _chip(context, 'Presentes', _present, Colors.green),
-                _chip(context, 'Retardos', _late, Colors.orange),
-                _chip(context, 'Ausentes', _absent, Colors.red),
-                _chip(context, 'Total', _rows.length, Colors.grey),
-              ],
-            ),
-          ),
-          // buscador
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            padding: const EdgeInsets.all(8),
             child: TextField(
-              onChanged: (v) => setState(() => _query = v),
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Buscar estudiante…',
-                border: UnderlineInputBorder(),
-              ),
-            ),
-          ),
-          // fecha/hora (solo display)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: surfaceHigh,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.calendar_today_outlined),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${widget.date.day}/${widget.date.month}/${widget.date.year}',
-                      ),
-                    ],
-                  ),
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                hintText: 'Buscar alumno...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                const SizedBox(width: 8),
-                if (widget.start.isNotEmpty || widget.end.isNotEmpty)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: surfaceHigh,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.access_time),
-                        const SizedBox(width: 8),
-                        Text('${widget.start} — ${widget.end}'),
-                      ],
-                    ),
-                  ),
-              ],
+              ),
+              onChanged: (v) => setState(() => _query = v),
             ),
           ),
-          const SizedBox(height: 8),
-          // lista
+
           Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-              separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemCount: _filtered.length,
+            child: ListView.builder(
+              itemCount: filtered.length,
               itemBuilder: (_, i) {
-                final r = _filtered[i];
-                return Material(
-                  color: surfaceLow,
-                  borderRadius: BorderRadius.circular(16),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // nombre + id
-                        Text(
-                          r.name,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 4),
-                        Text('ID: ${r.id}',
-                            style: Theme.of(context).textTheme.bodySmall),
-                        const SizedBox(height: 12),
-                        // tres botones de estado
-                        Row(
-                          children: [
-                            _stateButton(
-                              context: context,
-                              isSelected: r.status == _St.present,
-                              icon: Icons.check_circle_outline,
-                              onTap: () =>
-                                  setState(() => r.status = _St.present),
-                            ),
-                            const SizedBox(width: 12),
-                            _stateButton(
-                              context: context,
-                              isSelected: r.status == _St.late,
-                              icon: Icons.schedule_outlined,
-                              onTap: () => setState(() => r.status = _St.late),
-                            ),
-                            const SizedBox(width: 12),
-                            _stateButton(
-                              context: context,
-                              isSelected: r.status == _St.absent,
-                              icon: Icons.cancel_outlined,
-                              onTap: () =>
-                                  setState(() => r.status = _St.absent),
-                            ),
-                            const Spacer(),
-                            // etiqueta de estado
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.radio_button_off,
-                                  size: 18,
-                                  color: cs.onSurfaceVariant,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  _statusLabel(r.status),
-                                  style: Theme.of(context).textTheme.bodyMedium,
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
+                final r = filtered[i];
+                return Card(
+                  margin:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  child: ListTile(
+                    title: Text(r.name),
+                    subtitle: Text(r.id),
+                    trailing: ToggleButtons(
+                      borderRadius: BorderRadius.circular(12),
+                      isSelected: [
+                        r.status == _St.present,
+                        r.status == _St.late,
+                        r.status == _St.absent
+                      ],
+                      onPressed: (index) {
+                        setState(() {
+                          r.status = _St.values[index];
+                        });
+                      },
+                      children: const [
+                        Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 10),
+                            child: Icon(Icons.check_circle,
+                                color: Colors.green)),
+                        Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 10),
+                            child: Icon(Icons.access_time,
+                                color: Colors.orange)),
+                        Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 10),
+                            child:
+                                Icon(Icons.cancel, color: Colors.redAccent)),
                       ],
                     ),
                   ),
@@ -278,91 +189,36 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
           ),
         ],
       ),
+
+      // 🔹 Botón Guardar
       bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.all(12),
-        child: SizedBox(
-          height: 52,
-          child: FilledButton.icon(
-            onPressed: _save,
-            icon: const Icon(Icons.save_outlined),
-            label: const Text('Guardar Lista de Asistencia'),
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.save),
+            label: const Text('Guardar cambios'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade700,
+              foregroundColor: Colors.white,
+              minimumSize: const Size.fromHeight(50),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            onPressed: _saving ? null : _saveChanges,
           ),
         ),
       ),
     );
-  }
-
-  // ===== widgets auxiliares =====
-  Widget _chip(BuildContext context, String label, int value, Color color) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withOpacity(.12),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(.2)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '$label: $value',
-            style: TextStyle(color: cs.onSurface),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _stateButton({
-    required BuildContext context,
-    required bool isSelected,
-    required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    final cs = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(28),
-      child: Container(
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(
-          color: isSelected ? cs.primary.withOpacity(.12) : cs.surfaceVariant,
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: isSelected ? cs.primary : cs.outlineVariant,
-          ),
-        ),
-        child: Icon(
-          icon,
-          color: isSelected ? cs.primary : cs.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
-
-  String _statusLabel(_St s) {
-    switch (s) {
-      case _St.present:
-        return 'Presente';
-      case _St.late:
-        return 'Retardo';
-      case _St.absent:
-        return 'Ausente';
-    }
   }
 }
 
+// ============================================================
+// 🔹 Modelo interno de fila
+// ============================================================
 class _Row {
-  _Row({required this.id, required this.name, required this.status});
   final String id;
   final String name;
   _St status;
+  _Row({required this.id, required this.name, required this.status});
 }

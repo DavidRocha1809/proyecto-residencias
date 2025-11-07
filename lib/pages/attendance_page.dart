@@ -1,3 +1,4 @@
+// lib/pages/attendance_page.dart
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -40,14 +41,11 @@ class _AttendancePageState extends State<AttendancePage> {
   // 🔹 Cargar alumnos directamente desde Firestore
   Future<void> _loadStudentsFromFirestore() async {
     try {
-      setState(() {
-        _loading = true;
-      });
+      setState(() => _loading = true);
 
       final uid = _auth.currentUser?.uid;
       if (uid == null) throw Exception('Usuario no autenticado.');
 
-      // Buscar grupo por nombre
       final groupQuery = await _firestore
           .collection('groups')
           .where('name', isEqualTo: widget.groupClass.groupName)
@@ -61,7 +59,6 @@ class _AttendancePageState extends State<AttendancePage> {
       final doc = groupQuery.docs.first;
       final rawStudents = doc['students'] ?? [];
 
-      // ✅ Detectar y convertir correctamente los alumnos
       final List<Student> list = [];
       if (rawStudents is List) {
         for (var s in rawStudents) {
@@ -177,10 +174,8 @@ class _AttendancePageState extends State<AttendancePage> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(
-              widget.groupClass.subject,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
+            Text(widget.groupClass.subject,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
             const SizedBox(height: 2),
             Text(
               '${widget.groupClass.groupName} • ${_fmtTime(widget.groupClass.start)} - ${_fmtTime(widget.groupClass.end)}\n${df.format(_date)}',
@@ -277,7 +272,7 @@ class _AttendancePageState extends State<AttendancePage> {
                               const SizedBox(height: 8),
                           itemBuilder: (_, i) {
                             final s = filtered[i];
-                            return _StudentCard(
+                            return _StudentCardModern(
                               student: s,
                               presentColor: _presentColor,
                               lateColor: _lateColor,
@@ -332,12 +327,13 @@ class _CounterChip extends StatelessWidget {
   }
 }
 
-class _StudentCard extends StatelessWidget {
+// 🔹 Nuevo diseño de tarjetas (basado en editor)
+class _StudentCardModern extends StatelessWidget {
   final Student student;
   final Color presentColor, lateColor, absentColor;
   final ValueChanged<AttendanceStatus> onStatus;
 
-  const _StudentCard({
+  const _StudentCardModern({
     required this.student,
     required this.presentColor,
     required this.lateColor,
@@ -348,101 +344,72 @@ class _StudentCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final muted = Theme.of(context).colorScheme.outline;
-    return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(student.name,
-                style:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            Text(
-              'Matrícula: ${student.id.isEmpty ? "—" : student.id}',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: muted),
+            // Nombre del alumno
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    student.name,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Matrícula: ${student.id.isEmpty ? "—" : student.id}',
+                    style:
+                        TextStyle(color: muted, fontSize: 13),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 10),
+
+            // Botones de estado
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                _StatusButton(
-                  icon: Icons.check,
-                  color: presentColor,
-                  selected: student.status == AttendanceStatus.present,
-                  onTap: () => onStatus(AttendanceStatus.present),
+                IconButton(
+                  icon: Icon(Icons.check_circle,
+                      color: student.status == AttendanceStatus.present
+                          ? presentColor
+                          : Colors.grey.shade400),
+                  tooltip: 'Presente',
+                  onPressed: () => onStatus(AttendanceStatus.present),
                 ),
-                _StatusButton(
-                  icon: Icons.schedule,
-                  color: lateColor,
-                  selected: student.status == AttendanceStatus.late,
-                  onTap: () => onStatus(AttendanceStatus.late),
+                IconButton(
+                  icon: Icon(Icons.access_time,
+                      color: student.status == AttendanceStatus.late
+                          ? lateColor
+                          : Colors.grey.shade400),
+                  tooltip: 'Retardo',
+                  onPressed: () => onStatus(AttendanceStatus.late),
                 ),
-                _StatusButton(
-                  icon: Icons.close,
-                  color: absentColor,
-                  selected: student.status == AttendanceStatus.absent,
-                  onTap: () => onStatus(AttendanceStatus.absent),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const Icon(Icons.radio_button_unchecked, size: 18),
-                const SizedBox(width: 6),
-                Text(
-                  switch (student.status) {
-                    AttendanceStatus.present => 'Presente',
-                    AttendanceStatus.late => 'Retardo',
-                    AttendanceStatus.absent => 'Ausente',
-                    _ => 'Sin marcar',
-                  },
+                IconButton(
+                  icon: Icon(Icons.cancel,
+                      color: student.status == AttendanceStatus.absent
+                          ? absentColor
+                          : Colors.grey.shade400),
+                  tooltip: 'Ausente',
+                  onPressed: () => onStatus(AttendanceStatus.absent),
                 ),
               ],
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _StatusButton extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _StatusButton({
-    required this.icon,
-    required this.color,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = selected
-        ? color.withOpacity(.15)
-        : Theme.of(context).colorScheme.surfaceVariant;
-    final border = selected ? color : Colors.transparent;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(28),
-      child: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: border, width: 2),
-        ),
-        child: Icon(icon, color: color, size: 22),
       ),
     );
   }

@@ -229,7 +229,7 @@ class _GradesHistoryPageState extends State<GradesHistoryPage> {
           pw.SizedBox(height: 10),
           pw.TableHelper.fromTextArray(data: rows),
           pw.SizedBox(height: 10),
-          pw.Text('Actividades en rango: ${_inRange().length}', style: const pw.TextStyle(fontSize: 10)),
+          pw.Text('Activida rango: ${_inRange().length}', style: const pw.TextStyle(fontSize: 10)),
         ],
       ));
 
@@ -451,7 +451,7 @@ class _GradesHistoryPageState extends State<GradesHistoryPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Historial de calificaciones'),
+        title: const Text('Historial de calaciones'),
       ),
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.all(12),

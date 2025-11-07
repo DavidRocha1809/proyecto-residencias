@@ -34,7 +34,6 @@ class _SessionsPageState extends State<SessionsPage> {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => AttendanceHistoryPage(
-              groupClass: g,   // (opcional) para mostrar
             ),
           ),
         );
@@ -68,7 +67,6 @@ class _SessionsPageState extends State<SessionsPage> {
                   context,
                   MaterialPageRoute(
                     builder: (_) => AttendanceHistoryPage(
-                      groupClass: g,    // (opcional)
                     ),
                   ),
                 );

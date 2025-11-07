@@ -96,7 +96,7 @@ class _GradesDashboardPageState extends State<GradesDashboardPage> {
                           ),
                         ),
                         pw.Text(
-                          'Historial de calificaciones',
+                          'Historial de caciones',
                           style: const pw.TextStyle(fontSize: 12),
                         ),
                       ],
