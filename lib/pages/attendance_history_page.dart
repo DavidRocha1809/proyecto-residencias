@@ -4,9 +4,22 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'edit_attendance_page.dart';
+import '../utils/attendance_pdf.dart';
+import 'attendance_student_selection_page.dart';
+import '../models.dart';
+
+
 
 class AttendanceHistoryPage extends StatefulWidget {
-  const AttendanceHistoryPage({super.key});
+  final String groupName; // ✅ ID real del grupo (por ejemplo: 3E)
+  final String? displayName; // ✅ Nombre visual (por ejemplo: Humanidades 2)
+
+
+  const AttendanceHistoryPage({
+    super.key,
+    required this.groupName,
+    this.displayName,
+  });
 
   @override
   State<AttendanceHistoryPage> createState() => _AttendanceHistoryPageState();
@@ -14,33 +27,43 @@ class AttendanceHistoryPage extends StatefulWidget {
 
 class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
   final uid = FirebaseAuth.instance.currentUser!.uid;
+  
 
   DateTime _from = DateTime.now().subtract(const Duration(days: 30));
   DateTime _to = DateTime.now();
 
-  // ============================================================
-  // 🔹 Obtiene todas las sesiones del profesor autenticado
-  // ============================================================
-  Stream<List<Map<String, dynamic>>> _getAllSessions() async* {
-    final firestore = FirebaseFirestore.instance;
-    final attendanceRef =
-        firestore.collection('teachers').doc(uid).collection('attendance');
+ // ============================================================
+// 🔹 Obtiene solo las sesiones del grupo seleccionado (EN VIVO)
+// ============================================================
+Stream<List<Map<String, dynamic>>> _getAllSessions() {
+  final firestore = FirebaseFirestore.instance;
+  final attendanceRef =
+      firestore.collection('teachers').doc(uid).collection('attendance');
 
-    final snap = await attendanceRef.get();
-    final allSessions = snap.docs.map((doc) {
+  return attendanceRef.snapshots().map((snap) {
+    var allSessions = snap.docs.map((doc) {
       final data = doc.data();
       data['id'] = doc.id;
       return data;
     }).toList();
 
+    // 🔹 Filtrar por grupo
+    allSessions = allSessions
+        .where((s) =>
+            (s['groupName'] ?? s['groupId'] ?? '')
+                .toString()
+                .toLowerCase()
+                .contains(widget.groupName.toLowerCase()))
+        .toList();
+
     // 🔹 Filtrar por rango de fechas
     final from = DateTime(_from.year, _from.month, _from.day);
-    final to = DateTime(_to.year, _to.month, _to.day);
+final to = DateTime(_to.year, _to.month, _to.day, 23, 59, 59);
 
-    final filtered = allSessions.where((s) {
-      final d = _safeParseDate(s['date']);
-      return !d.isBefore(from) && !d.isAfter(to);
-    }).toList();
+final filtered = allSessions.where((s) {
+  final d = _safeParseDate(s['date']);
+  return !d.isBefore(from) && !d.isAfter(to);
+}).toList();
 
     // 🔹 Ordenar por fecha (más reciente primero)
     filtered.sort((a, b) {
@@ -49,8 +72,11 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
       return bDate.compareTo(aDate);
     });
 
-    yield filtered;
-  }
+    print('📡 Actualización detectada en historial (${filtered.length} registros)');
+    return filtered;
+  });
+}
+
 
   // ============================================================
   // 🔹 Funciones auxiliares
@@ -173,114 +199,202 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
     final df = DateFormat('dd/MM/yyyy');
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Historial de asistencias')),
-      body: Column(
-        children: [
-          // 🔸 Filtros de fecha
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _pickFrom,
-                    icon: const Icon(Icons.event),
-                    label: Text('Desde: ${df.format(_from)}'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _pickTo,
-                    icon: const Icon(Icons.event_available),
-                    label: Text('Hasta: ${df.format(_to)}'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const Divider(height: 0),
-
-          // 🔸 Lista de sesiones
-          Expanded(
-            child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: _getAllSessions(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return const Center(
-                    child: Text('No hay sesiones en el rango seleccionado.'),
-                  );
-                }
-
-                final sessions = snapshot.data!;
-                return ListView.builder(
-                  itemCount: sessions.length,
-                  itemBuilder: (context, i) {
-                    final s = sessions[i];
-                    final date = _safeParseDate(s['date']);
-                    final formattedDate = (date.year == 0)
-                        ? 'Sin fecha'
-                        : '${date.day}/${date.month}/${date.year}';
-                    final groupName =
-                        s['groupName'] ?? s['groupId'] ?? 'Sin grupo';
-
-                    return Card(
-                      margin: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
-                      child: ListTile(
-                        title: Text('$groupName — $formattedDate'),
-                        subtitle: Text('${s['start'] ?? ''} - ${s['end'] ?? ''}'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // ✏️ Editar
-                            IconButton(
-                              icon: const Icon(Icons.edit,
-                                  color: Colors.blueAccent),
-                              tooltip: 'Editar pase de lista',
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => EditAttendancePage(
-                                      docId: s['id'],
-                                      subject: s['groupName'] ?? '',
-                                      groupName: groupName,
-                                      start: s['start'] ?? '',
-                                      end: s['end'] ?? '',
-                                      date: date,
-                                      records: List<Map<String, dynamic>>.from(
-                                          s['records'] ?? []),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-
-                            // 🗑️ Eliminar
-                            IconButton(
-                              icon: const Icon(Icons.delete,
-                                  color: Colors.redAccent),
-                              tooltip: 'Eliminar registro',
-                              onPressed: () => _deleteSession(
-                                  s['id'], groupName, formattedDate),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ],
+      appBar: AppBar(
+        title: Text('Historial de ${widget.groupName}'),
       ),
+      body: Stack(
+  children: [
+    Column(
+      children: [
+        // 🔸 Filtros de fecha
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _pickFrom,
+                  icon: const Icon(Icons.event),
+                  label: Text('Desde: ${df.format(_from)}'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _pickTo,
+                  icon: const Icon(Icons.event_available),
+                  label: Text('Hasta: ${df.format(_to)}'),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const Divider(height: 0),
+
+        // 🔸 Lista de sesiones
+        Expanded(
+          child: StreamBuilder<List<Map<String, dynamic>>>(
+            stream: _getAllSessions(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                return const Center(
+                  child: Text('No hay sesiones en el rango seleccionado.'),
+                );
+              }
+
+              final sessions = snapshot.data!;
+              return ListView.builder(
+                itemCount: sessions.length,
+                itemBuilder: (context, i) {
+                  final s = sessions[i];
+                  final date = _safeParseDate(s['date']);
+                  final formattedDate = (date.year == 0)
+                      ? 'Sin fecha'
+                      : '${date.day}/${date.month}/${date.year}';
+                  final groupName =
+                      s['groupName'] ?? s['groupId'] ?? 'Sin grupo';
+
+                  return Card(
+                    margin: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
+                    child: ListTile(
+                      title: Text('$groupName — $formattedDate'),
+                      subtitle:
+                          Text('${s['start'] ?? ''} - ${s['end'] ?? ''}'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // ✏️ Editar
+                          IconButton(
+                            icon: const Icon(Icons.edit,
+                                color: Colors.blueAccent),
+                            tooltip: 'Editar pase de lista',
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => EditAttendancePage(
+                                    docId: s['id'],
+                                    subject: s['groupName'] ?? '',
+                                    groupName: groupName,
+                                    start: s['start'] ?? '',
+                                    end: s['end'] ?? '',
+                                    date: date,
+                                    records: List<Map<String, dynamic>>.from(
+                                        s['records'] ?? []),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+
+                          // 🗑️ Eliminar
+                          IconButton(
+                            icon: const Icon(Icons.delete,
+                                color: Colors.redAccent),
+                            tooltip: 'Eliminar registro',
+                            onPressed: () => _deleteSession(
+                                s['id'], groupName, formattedDate),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    ),
+
+    // 🧩 Botón inferior para exportar PDF
+    SafeArea(
+      minimum: const EdgeInsets.all(16),
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: FilledButton.icon(
+            icon: const Icon(Icons.picture_as_pdf),
+            label: const Text('Exportar PDF'),
+            onPressed: () async {
+              // 🔹 Menú con opciones
+              final option = await showModalBottomSheet<String>(
+                context: context,
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                builder: (_) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 12),
+                    const Text('Exportar PDF',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
+                    const Divider(),
+                    ListTile(
+                      leading: const Icon(Icons.assessment_outlined,
+                          color: Colors.teal),
+                      title: const Text('Exportar resumen general'),
+                      onTap: () => Navigator.pop(context, 'general'),
+                    ),
+                    ListTile(
+                      leading:
+                          const Icon(Icons.person_outline, color: Colors.indigo),
+                      title: const Text('Exportar por alumno'),
+                      onTap: () => Navigator.pop(context, 'student'),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                ),
+              );
+
+              if (option == 'general') {
+                await AttendancePdf.exportSummaryByStudent(
+                  groupId: widget.groupName.replaceAll('|', '_'),
+                  subject: null,
+                  groupName: widget.displayName ?? widget.groupName, // 👈 usa el nombre visual si existe
+                  from: _from,
+                  to: _to,
+                );
+              } else if (option == 'student') {
+                Navigator.push(
+  context,
+  MaterialPageRoute(
+    builder: (_) => AttendanceStudentSelectionPage(
+      groupClass: GroupClass(
+  id: widget.groupName.replaceAll('|', '_'),
+  groupName: widget.groupName,
+  subject: '',
+  start: const TimeOfDay(hour: 0, minute: 0), // 👈 Valor por defecto
+  end: const TimeOfDay(hour: 0, minute: 0),   // 👈 Valor por defecto
+  students: const [],                         // 👈 Lista vacía
+),
+
+
+      from: _from,
+      to: _to,
+    ),
+  ),
+);
+
+
+              }
+            },
+          ),
+        ),
+      ),
+    ),
+  ],
+),
+
     );
   }
 }

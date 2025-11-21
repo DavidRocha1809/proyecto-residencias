@@ -37,6 +37,7 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
   @override
   void initState() {
     super.initState();
+    // 🔹 Cargar los registros iniciales respetando su estado real
     _rows = widget.records
         .map((e) => _Row(
               id: e['studentId'] ?? '',
@@ -46,6 +47,9 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
         .toList();
   }
 
+  // ============================================================
+  // 🔹 Convertir string a enum
+  // ============================================================
   _St _parseStatus(dynamic s) {
     switch (s) {
       case 'present':
@@ -55,10 +59,13 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
       case 'absent':
         return _St.absent;
       default:
-        return _St.present;
+        return _St.absent; // ✅ No marcar presente por defecto
     }
   }
 
+  // ============================================================
+  // 🔹 Convertir enum a string
+  // ============================================================
   String _statusToString(_St s) {
     switch (s) {
       case _St.present:
@@ -70,6 +77,9 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
     }
   }
 
+  // ============================================================
+  // 🔹 Guardar cambios en Firestore
+  // ============================================================
   Future<void> _saveChanges() async {
     setState(() => _saving = true);
     final uid = FirebaseAuth.instance.currentUser!.uid;
@@ -95,7 +105,9 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Cambios guardados correctamente.')),
         );
-        Navigator.pop(context);
+
+        // 🔹 Enviar señal para recargar datos al volver
+        Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
@@ -108,6 +120,9 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
     }
   }
 
+  // ============================================================
+  // 🔹 UI
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     final filtered = _rows
@@ -118,7 +133,7 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Editar'),
+        title: const Text('Editar asistencia'),
         actions: [
           if (_saving)
             const Padding(
@@ -144,17 +159,26 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
             ),
           ),
 
+          // 🔹 Lista de alumnos
           Expanded(
             child: ListView.builder(
               itemCount: filtered.length,
               itemBuilder: (_, i) {
                 final r = filtered[i];
                 return Card(
+                  color: Colors.pink.shade50,
                   margin:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   child: ListTile(
-                    title: Text(r.name),
-                    subtitle: Text(r.id),
+                    title: Text(
+                      r.name,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 15),
+                    ),
+                    subtitle: Text(
+                      'Matrícula: ${r.id}',
+                      style: const TextStyle(color: Colors.black54),
+                    ),
                     trailing: ToggleButtons(
                       borderRadius: BorderRadius.circular(12),
                       isSelected: [
@@ -169,17 +193,20 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
                       },
                       children: const [
                         Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 10),
-                            child: Icon(Icons.check_circle,
-                                color: Colors.green)),
+                          padding: EdgeInsets.symmetric(horizontal: 10),
+                          child:
+                              Icon(Icons.check_circle, color: Colors.green),
+                        ),
                         Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 10),
-                            child: Icon(Icons.access_time,
-                                color: Colors.orange)),
+                          padding: EdgeInsets.symmetric(horizontal: 10),
+                          child: Icon(Icons.access_time,
+                              color: Colors.orange),
+                        ),
                         Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 10),
-                            child:
-                                Icon(Icons.cancel, color: Colors.redAccent)),
+                          padding: EdgeInsets.symmetric(horizontal: 10),
+                          child:
+                              Icon(Icons.cancel, color: Colors.redAccent),
+                        ),
                       ],
                     ),
                   ),

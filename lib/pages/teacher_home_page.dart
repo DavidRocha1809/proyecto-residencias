@@ -1,10 +1,13 @@
+// lib/pages/teacher_home_page.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'login_page.dart';
 import 'attendance_page.dart';
-import 'attendance_history_page.dart'; // ✅ cambiado
-import '../models.dart'; // ✅ Import necesario para usar GroupClass y Student
+import 'attendance_history_page.dart';
+import 'grades_capture_page.dart';
+import 'grades_history_page.dart';
+import '../models.dart';
 
 class TeacherHomePage extends StatefulWidget {
   const TeacherHomePage({super.key});
@@ -18,6 +21,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   final _firestore = FirebaseFirestore.instance;
   bool _loading = false;
   String? _error;
+  int _selectedIndex = 0; // Para la barra inferior
 
   Future<void> _logout() async {
     await _auth.signOut();
@@ -28,7 +32,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
   }
 
-  // 🔹 Seleccionar grupo (crea con campos originales)
+  // 🔹 Seleccionar grupo
   Future<void> _selectGroup() async {
     try {
       setState(() {
@@ -89,7 +93,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
   }
 
-  // 🗑️ Eliminar grupo + historial
+  // 🗑️ Eliminar grupo
   Future<void> _deleteGroup(String groupId, String groupName) async {
     final uid = _auth.currentUser!.uid;
 
@@ -99,7 +103,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         title: const Text('Eliminar grupo'),
         content: Text(
           '¿Seguro que deseas eliminar "$groupName"?\n\n'
-          'Esto eliminará también todo su historial de asistencias.',
+          'Esto eliminará también todo su historial de asistencias y calificaciones.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
@@ -118,19 +122,23 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
 
       await teacherRef.collection('assigned_groups').doc(groupId).delete();
 
-      final sessionsRef =
-          teacherRef.collection('attendance').doc(groupName).collection('sessions');
+      // Borrar asistencias y calificaciones del grupo
+      final attendanceRef = teacherRef.collection('attendance').doc(groupName).collection('sessions');
+      final gradesRef = teacherRef.collection('grades').doc(groupName).collection('activities');
 
-      final sessionsSnap = await sessionsRef.get();
+      final sessionsSnap = await attendanceRef.get();
       for (var doc in sessionsSnap.docs) {
-        await sessionsRef.doc(doc.id).delete();
+        await attendanceRef.doc(doc.id).delete();
       }
 
-      await teacherRef.collection('attendance').doc(groupName).delete();
+      final gradesSnap = await gradesRef.get();
+      for (var doc in gradesSnap.docs) {
+        await gradesRef.doc(doc.id).delete();
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Grupo "$groupName" y su historial fueron eliminados.'),
+          content: Text('Grupo "$groupName" eliminado con su historial.'),
           backgroundColor: Colors.green.shade700,
         ),
       );
@@ -144,6 +152,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
   }
 
+  // ✏️ Editar nombre visual
   Future<void> _editGroupName(String groupId, String currentDisplay) async {
     final controller = TextEditingController(text: currentDisplay);
 
@@ -189,16 +198,383 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
+  // 🔹 Cuerpo de asistencia (idéntico al tuyo)
+  Widget _buildAttendanceBody() {
     final uid = _auth.currentUser!.uid;
 
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.add, color: Colors.white),
+              label: Text(
+                _loading ? 'Cargando...' : 'Seleccionar grupo',
+                style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
+              ),
+              onPressed: _loading ? null : _selectGroup,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFD32F2F),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (_error != null)
+            Text(_error!, style: TextStyle(color: Colors.red.shade700, fontSize: 13)),
+          const SizedBox(height: 16),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: _firestore
+                  .collection('teachers')
+                  .doc(uid)
+                  .collection('assigned_groups')
+                  .snapshots(),
+              builder: (context, snap) {
+                if (!snap.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                final docs = snap.data!.docs;
+                if (docs.isEmpty) {
+                  return const Center(child: Text('No has seleccionado ningún grupo.'));
+                }
+
+                return ListView.separated(
+                  itemCount: docs.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (context, i) {
+                    final group = docs[i];
+                    final data = group.data() as Map<String, dynamic>? ?? {};
+                    final groupName = data['displayName'] ?? data['name'] ?? 'Sin nombre';
+                    final originalName = data['originalName'] ?? data['name'] ?? groupName;
+                    final rawStudents = data['students'] ?? [];
+
+                    final List<Student> students = [];
+                    if (rawStudents is List) {
+                      for (var s in rawStudents) {
+                        if (s is String) {
+                          students.add(Student(id: '', name: s));
+                        } else if (s is Map) {
+                          students.add(Student(
+                            id: s['matricula']?.toString() ?? '',
+                            name: s['name']?.toString() ?? '',
+                          ));
+                        }
+                      }
+                    }
+
+                    return Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFDF0F1),
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.05),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  groupName,
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ),
+                              PopupMenuButton<String>(
+                                onSelected: (value) {
+                                  if (value == 'edit') {
+                                    _editGroupName(group.id, groupName);
+                                  } else if (value == 'delete') {
+                                    _deleteGroup(group.id, originalName);
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  const PopupMenuItem(
+                                    value: 'edit',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.edit, color: Colors.black54),
+                                        SizedBox(width: 8),
+                                        Text('Editar'),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'delete',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.delete_outline, color: Colors.redAccent),
+                                        SizedBox(width: 8),
+                                        Text('Eliminar'),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text('Alumnos: ${students.length}',
+                              style: TextStyle(color: Colors.grey.shade700)),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => AttendancePage(
+                                          groupClass: GroupClass(
+                                            id: group.id,
+                                            groupName: originalName,
+                                            subject: 'Materia no especificada',
+                                            start: const TimeOfDay(hour: 7, minute: 0),
+                                            end: const TimeOfDay(hour: 8, minute: 0),
+                                            students: students,
+                                            turno: 'Vespertino',
+                                            dia: '',
+                                          ),
+                                          initialDate: DateTime.now(),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFD32F2F),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  child: Text('Tomar Lista $groupName'),
+                                  
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => AttendanceHistoryPage(
+                                                  groupName: originalName,      // nombre real (ej. 3E)
+                                                  displayName: groupName,       // nombre visual (ej. Humanidades 2)
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  icon: const Icon(Icons.history),
+                                  label: const Text('Historial'),
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(color: Color(0xFFD32F2F)),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🔹 Cuerpo de calificaciones (idéntico, pero con otros botones)
+  Widget _buildGradesBody() {
+    final uid = _auth.currentUser!.uid;
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: StreamBuilder<QuerySnapshot>(
+        stream: _firestore
+            .collection('teachers')
+            .doc(uid)
+            .collection('assigned_groups')
+            .snapshots(),
+        builder: (context, snap) {
+          if (!snap.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final docs = snap.data!.docs;
+          if (docs.isEmpty) {
+            return const Center(child: Text('No tienes grupos asignados.'));
+          }
+
+          return ListView.separated(
+            itemCount: docs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (context, i) {
+              final group = docs[i];
+              final data = group.data() as Map<String, dynamic>? ?? {};
+
+              final groupName = data['displayName'] ?? data['name'] ?? 'Sin nombre';
+              final originalName = data['originalName'] ?? data['name'] ?? groupName;
+              final rawStudents = data['students'] ?? [];
+
+              final List<Student> students = [];
+              if (rawStudents is List) {
+                for (var s in rawStudents) {
+                  if (s is String) {
+                    students.add(Student(id: '', name: s));
+                  } else if (s is Map) {
+                    students.add(Student(
+                      id: s['matricula']?.toString() ?? '',
+                      name: s['name']?.toString() ?? '',
+                    ));
+                  }
+                }
+              }
+
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFDF0F1),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            groupName,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text('Alumnos: ${students.length}',
+                        style: TextStyle(color: Colors.grey.shade700)),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => GradesCapturePage(
+                                    groupClass: GroupClass(
+                                      id: group.id,
+                                      groupName: originalName,
+                                      subject: 'Materia no especificada',
+                                      start: const TimeOfDay(hour: 7, minute: 0),
+                                      end: const TimeOfDay(hour: 8, minute: 0),
+                                      students: students,
+                                      turno: 'Vespertino',
+                                      dia: '',
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.edit_note),
+                            label: Text('Capturar $groupName'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFD32F2F),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => GradesHistoryPage(
+                                    groupClass: GroupClass(
+                                      id: group.id,
+                                      groupName: originalName,
+                                      subject: 'Materia no especificada',
+                                      start: const TimeOfDay(hour: 7, minute: 0),
+                                      end: const TimeOfDay(hour: 8, minute: 0),
+                                      students: students,
+                                      turno: 'Vespertino',
+                                      dia: '',
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.history),
+                            label: const Text('Historial'),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFFD32F2F)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
         title: const Text(
-          'Sistema CETIS 31',
+          'Control de asistencias CETIS 31',
           style: TextStyle(fontWeight: FontWeight.w800, color: Colors.black87),
         ),
         actions: [
@@ -209,217 +585,24 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         ],
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.add),
-                  label: Text(
-                    _loading ? 'Cargando...' : 'Seleccionar grupo',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  onPressed: _loading ? null : _selectGroup,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFD32F2F),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              if (_error != null)
-                Text(_error!, style: TextStyle(color: Colors.red.shade700, fontSize: 13)),
-
-              const SizedBox(height: 16),
-
-              Expanded(
-                child: StreamBuilder<QuerySnapshot>(
-                  stream: _firestore
-                      .collection('teachers')
-                      .doc(uid)
-                      .collection('assigned_groups')
-                      .snapshots(),
-                  builder: (context, snap) {
-                    if (!snap.hasData) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    final docs = snap.data!.docs;
-                    if (docs.isEmpty) {
-                      return const Center(
-                        child: Text('No has seleccionado ningún grupo.'),
-                      );
-                    }
-
-                    return ListView.separated(
-                      itemCount: docs.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 12),
-                      itemBuilder: (context, i) {
-                        final group = docs[i];
-                        final data = group.data() as Map<String, dynamic>? ?? {};
-
-                        final groupName = data['displayName'] ?? data['name'] ?? 'Sin nombre';
-                        final originalName = data['originalName'] ?? data['name'] ?? groupName;
-                        final rawStudents = data['students'] ?? [];
-
-                        final List<Student> students = [];
-                        if (rawStudents is List) {
-                          for (var s in rawStudents) {
-                            if (s is String) {
-                              students.add(Student(id: '', name: s));
-                            } else if (s is Map) {
-                              students.add(Student(
-                                id: s['matricula']?.toString() ?? '',
-                                name: s['name']?.toString() ?? '',
-                              ));
-                            }
-                          }
-                        }
-
-                        return Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFDF0F1),
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.05),
-                                blurRadius: 8,
-                                offset: const Offset(0, 3),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      groupName,
-                                      style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w800,
-                                        color: Colors.black87,
-                                      ),
-                                    ),
-                                  ),
-                                  PopupMenuButton<String>(
-                                    onSelected: (value) {
-                                      if (value == 'edit') {
-                                        _editGroupName(group.id, groupName);
-                                      } else if (value == 'delete') {
-                                        _deleteGroup(group.id, originalName);
-                                      }
-                                    },
-                                    itemBuilder: (context) => [
-                                      const PopupMenuItem(
-                                        value: 'edit',
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.edit, color: Colors.black54),
-                                            SizedBox(width: 8),
-                                            Text('Editar'),
-                                          ],
-                                        ),
-                                      ),
-                                      const PopupMenuItem(
-                                        value: 'delete',
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.delete_outline, color: Colors.redAccent),
-                                            SizedBox(width: 8),
-                                            Text('Eliminar'),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                'Alumnos: ${students.length}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey.shade700,
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-
-                              // 🔹 Botones de acción
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: ElevatedButton(
-                                      onPressed: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) => AttendancePage(
-                                              groupClass: GroupClass(
-                                                groupName: originalName,
-                                                subject: 'Materia no especificada',
-                                                start: const TimeOfDay(hour: 7, minute: 0),
-                                                end: const TimeOfDay(hour: 8, minute: 0),
-                                                students: students,
-                                                turno: 'Vespertino',
-                                                dia: '',
-                                              ),
-                                              initialDate: DateTime.now(),
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFFD32F2F),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                      ),
-                                      child: Text('Tomar Lista $groupName'),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: OutlinedButton.icon(
-                                      onPressed: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) => const AttendanceHistoryPage(), // ✅ corregido
-                                          ),
-                                        );
-                                      },
-                                      icon: const Icon(Icons.history),
-                                      label: const Text('Historial'),
-                                      style: OutlinedButton.styleFrom(
-                                        side: const BorderSide(color: Color(0xFFD32F2F)),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
+        child: _selectedIndex == 0 ? _buildAttendanceBody() : _buildGradesBody(),
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedIndex,
+        backgroundColor: Colors.black,
+        selectedItemColor: Colors.tealAccent,
+        unselectedItemColor: Colors.white70,
+        onTap: (i) => setState(() => _selectedIndex = i),
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.assignment),
+            label: 'Asistencia',
           ),
-        ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.grade),
+            label: 'Calificaciones',
+          ),
+        ],
       ),
     );
   }

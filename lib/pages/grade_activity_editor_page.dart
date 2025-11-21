@@ -4,7 +4,6 @@ import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../models.dart';
-import '../local_groups.dart' as LG;
 import '../models/grade_models.dart';
 
 // Firestore directo para actualizar
@@ -53,7 +52,7 @@ class _GradeActivityGradesEditorPageState
   List<Student> _students = [];
   final Map<String, TextEditingController> _gradeCtrls = {};
 
-  String get _groupId => LG.groupKeyOf(widget.groupClass);
+  String get _groupId => widget.groupClass.groupName.replaceAll('|', '_');
   String get _boxName => 'grades_log::$_groupId';
 
   @override
@@ -65,10 +64,23 @@ class _GradeActivityGradesEditorPageState
   }
 
   Future<void> _load() async {
-    final studs = await LG.LocalGroups.listStudents(groupId: _groupId)
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  try {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) throw Exception('No autenticado');
 
-    // Prellenar controllers con las calificaciones existentes
+    final snap = await FirebaseFirestore.instance
+        .collection('teachers')
+        .doc(uid)
+        .collection('groups')
+        .doc(_groupId)
+        .collection('students')
+        .get();
+
+    final studs = snap.docs
+        .map((d) => Student(id: d.id, name: d['name'] ?? ''))
+        .toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+
     for (final s in studs) {
       _gradeCtrls[s.id] = TextEditingController(
         text: widget.initialGrades[s.id]?.toString() ?? '',
@@ -79,7 +91,11 @@ class _GradeActivityGradesEditorPageState
       _students = studs;
       _loading = false;
     });
+  } catch (e) {
+    debugPrint('❌ Error cargando alumnos: $e');
+    setState(() => _loading = false);
   }
+}
 
   @override
   void dispose() {

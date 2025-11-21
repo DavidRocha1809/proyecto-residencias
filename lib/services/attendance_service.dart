@@ -1,14 +1,17 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+
 
 class AttendanceService {
   AttendanceService._();
   static final instance = AttendanceService._();
 
-  FirebaseFirestore get _db => FirebaseFirestore.instance;
-  String get _uid => FirebaseAuth.instance.currentUser!.uid;
+  final _firestore = FirebaseFirestore.instance;
+  final _auth = FirebaseAuth.instance;
 
-  /// Guarda una sesión de asistencia.
+  /// 🔹 Guarda la sesión (usa Hive si no hay red)
   Future<void> saveSessionToFirestore({
     required String groupId,
     required String subject,
@@ -18,103 +21,111 @@ class AttendanceService {
     required DateTime date,
     required List<Map<String, dynamic>> records,
   }) async {
-    final docId = '${groupId}_${date.year.toString().padLeft(4, '0')}-'
-        '${date.month.toString().padLeft(2, '0')}-'
-        '${date.day.toString().padLeft(2, '0')}';
-
-    final ref = _db
-        .collection('teachers')
-        .doc(_uid)
-        .collection('attendance')
-        .doc(docId);
-
-    await ref.set({
-      'teacherUid': _uid,
+    final uid = _auth.currentUser!.uid;
+    final docId =
+        '${groupName}_${date.year}${date.month.toString().padLeft(2, '0')}${date.day.toString().padLeft(2, '0')}';
+    final data = {
       'groupId': groupId,
       'subject': subject,
       'groupName': groupName,
       'start': start,
       'end': end,
-      'date': Timestamp.fromDate(date),
+      'date': date.toIso8601String(),
       'records': records,
-      'present': records.where((r) => r['status'] == 'present').length,
-      'late': records.where((r) => r['status'] == 'late').length,
-      'absent': records.where((r) => r['status'] == 'absent').length,
-      'total': records.length,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-  }
+      'timestamp': FieldValue.serverTimestamp(),
+    };
 
-  /// Lista todas las sesiones de asistencia de un grupo
-  Future<List<Map<String, dynamic>>> listSessions({
-    required String groupId,
-    int limit = 100,
-    DateTime? dateFrom,
-    DateTime? dateTo,
-  }) async {
-    final snap = await _db
+    final conn = await Connectivity().checkConnectivity();
+
+    if (conn == ConnectivityResult.none) {
+      // 📦 Guardar localmente si no hay red
+      final box = await Hive.openBox('offline_attendance');
+      await box.put(docId, data);
+      print('📦 Guardado localmente ($docId) sin conexión');
+      return;
+    }
+
+    // ☁️ Guardar en Firestore
+    await _firestore
         .collection('teachers')
-        .doc(_uid)
+        .doc(uid)
         .collection('attendance')
-        .where('groupId', isEqualTo: groupId)
-        .orderBy('date', descending: true)
-        .limit(limit)
-        .get();
+        .doc(docId)
+        .set(data, SetOptions(merge: true));
 
-    return snap.docs
-        .map((d) => {'docId': d.id, ...d.data()})
-        .cast<Map<String, dynamic>>()
-        .toList();
+    print('☁️ Enviado correctamente a Firestore ($docId)');
   }
 
-  /// Devuelve una sesión específica por grupo y fecha.
-  Future<Map<String, dynamic>?> getSessionByGroupAndDate({
-    required String groupId,
-    required DateTime date,
-  }) async {
-    final docId = '${groupId}_${date.year.toString().padLeft(4, '0')}-'
-        '${date.month.toString().padLeft(2, '0')}-'
-        '${date.day.toString().padLeft(2, '0')}';
+  /// 🔹 Sube pendientes de Hive cuando vuelva internet
+  Future<void> syncPendingData() async {
+    final conn = await Connectivity().checkConnectivity();
+    if (conn == ConnectivityResult.none) return;
 
-    final ref = _db
-        .collection('teachers')
-        .doc(_uid)
-        .collection('attendance')
-        .doc(docId);
+    final box = await Hive.openBox('offline_attendance');
+    final keys = box.keys.toList();
 
-    final d = await ref.get();
-    if (!d.exists) return null;
-    return {'docId': d.id, ...d.data()!};
+    for (final key in keys) {
+      final data = box.get(key);
+      if (data != null) {
+        final uid = _auth.currentUser!.uid;
+        await _firestore
+            .collection('teachers')
+            .doc(uid)
+            .collection('attendance')
+            .doc(key)
+            .set(Map<String, dynamic>.from(data), SetOptions(merge: true));
+        print('☁️ Sincronizado $key con Firestore');
+        await box.delete(key);
+      }
+    }
   }
 
-  /// Actualiza una sesión existente
-  Future<void> updateSessionById({
-    required String docId,
-    required List<Map<String, dynamic>> records,
-  }) async {
-    final ref = _db
-        .collection('teachers')
-        .doc(_uid)
-        .collection('attendance')
-        .doc(docId);
+   // ========================================================
+// 🔹 Listar sesiones guardadas (para reportes)
+// ========================================================
+Future<List<Map<String, dynamic>>> listSessions({
+  required String groupId,
+  DateTime? dateFrom,
+  DateTime? dateTo,
+  int limit = 1000,
+}) async {
+  final uid = _auth.currentUser!.uid;
+  final col = _firestore
+      .collection('teachers')
+      .doc(uid)
+      .collection('attendance');
 
-    await ref.update({
-      'records': records,
-      'present': records.where((r) => r['status'] == 'present').length,
-      'late': records.where((r) => r['status'] == 'late').length,
-      'absent': records.where((r) => r['status'] == 'absent').length,
-      'total': records.length,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+  Query query = col.where('groupId', isEqualTo: groupId);
+
+  if (dateFrom != null) {
+    query = query.where(
+      'date',
+      isGreaterThanOrEqualTo: dateFrom.toIso8601String(),
+    );
+  }
+  if (dateTo != null) {
+    query = query.where(
+      'date',
+      isLessThanOrEqualTo: dateTo.toIso8601String(),
+    );
   }
 
-  /// Elimina una sesión
-  Future<void> deleteSessionById({required String docId}) async {
-    final ref = _db
-        .collection('teachers')
-        .doc(_uid)
-        .collection('attendance')
-        .doc(docId);
-    await ref.delete();
-  }
+  final snap = await query.limit(limit).get();
+
+  // ✅ Conversión segura con tipado explícito
+  final List<Map<String, dynamic>> sessions = snap.docs.map((doc) {
+    final Map<String, dynamic> data =
+        doc.data() as Map<String, dynamic>? ?? <String, dynamic>{};
+
+    // Agregamos el ID del documento
+    data['id'] = doc.id;
+
+    return data;
+  }).toList();
+
+  return sessions;
+}
+
+
+
 }

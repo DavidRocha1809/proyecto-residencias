@@ -1,7 +1,7 @@
 // lib/pages/sessions_page.dart
 import 'package:flutter/material.dart';
 import '../models.dart';
-import '../local_groups.dart' as LG;
+
 
 import 'attendance_history_page.dart' show AttendanceHistoryPage;
 
@@ -34,6 +34,7 @@ class _SessionsPageState extends State<SessionsPage> {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => AttendanceHistoryPage(
+              groupName: g.groupName,
             ),
           ),
         );
@@ -67,6 +68,7 @@ class _SessionsPageState extends State<SessionsPage> {
                   context,
                   MaterialPageRoute(
                     builder: (_) => AttendanceHistoryPage(
+                      groupName: g.groupName,
                     ),
                   ),
                 );
