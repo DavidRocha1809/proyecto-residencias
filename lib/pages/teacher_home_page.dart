@@ -32,7 +32,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
   }
 
-  // 🔹 Seleccionar grupo
+  // 🔹 Seleccionar grupo (con filtro por turno)
   Future<void> _selectGroup() async {
     try {
       setState(() {
@@ -40,7 +40,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         _error = null;
       });
 
-      final groupsSnap = await _firestore.collection('groups').get();
+      final QuerySnapshot<Map<String, dynamic>> groupsSnap =
+      await _firestore.collection('groups').get();
+
       if (groupsSnap.docs.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No hay grupos disponibles')),
@@ -48,19 +50,100 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         return;
       }
 
-      final selected = await showDialog<QueryDocumentSnapshot>(
+      final allDocs = groupsSnap.docs;
+
+      final selected =
+      await showDialog<QueryDocumentSnapshot<Map<String, dynamic>>>(
         context: context,
         builder: (ctx) {
-          return SimpleDialog(
-            title: const Text('Selecciona un grupo'),
-            children: groupsSnap.docs
-                .map(
-                  (doc) => SimpleDialogOption(
-                    onPressed: () => Navigator.pop(ctx, doc),
-                    child: Text(doc['name'] ?? 'Sin nombre'),
+          String filtroTurno = 'TODOS'; // TODOS / MATUTINO / VESPERTINO
+
+          return StatefulBuilder(
+            builder: (ctx, setStateDialog) {
+              final filtered = allDocs.where((doc) {
+                final data = doc.data();
+                final turno =
+                (data['turno'] ?? '').toString().trim().toUpperCase();
+                if (filtroTurno == 'TODOS') return true;
+                return turno == filtroTurno;
+              }).toList();
+
+              return AlertDialog(
+                title: const Text('Selecciona un grupo'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Text('Turno:'),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: DropdownButton<String>(
+                            isExpanded: true,
+                            value: filtroTurno,
+                            items: const [
+                              DropdownMenuItem(
+                                value: 'TODOS',
+                                child: Text('Todos'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'MATUTINO',
+                                child: Text('Matutino'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'VESPERTINO',
+                                child: Text('Vespertino'),
+                              ),
+                            ],
+                            onChanged: (value) {
+                              if (value == null) return;
+                              setStateDialog(() => filtroTurno = value);
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (filtered.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(8.0),
+                        child: Text(
+                          'No hay grupos para este turno.',
+                          style: TextStyle(fontSize: 13),
+                        ),
+                      )
+                    else
+                      SizedBox(
+                        width: double.maxFinite,
+                        height: 300,
+                        child: ListView.builder(
+                          itemCount: filtered.length,
+                          itemBuilder: (ctx, i) {
+                            final doc = filtered[i];
+                            final data = doc.data();
+                            final name = data['name'] ?? 'Sin nombre';
+                            final turno = (data['turno'] ?? '').toString();
+
+                            return ListTile(
+                              title: Text(name),
+                              subtitle: turno.isNotEmpty
+                                  ? Text('Turno: $turno')
+                                  : null,
+                              onTap: () => Navigator.pop(ctx, doc),
+                            );
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Cancelar'),
                   ),
-                )
-                .toList(),
+                ],
+              );
+            },
           );
         },
       );
@@ -68,6 +151,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       if (selected == null) return;
 
       final uid = _auth.currentUser!.uid;
+      final data = selected.data();
+      final turno = (data['turno'] ?? '').toString();
+
       await _firestore
           .collection('teachers')
           .doc(uid)
@@ -75,16 +161,19 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           .doc(selected.id)
           .set({
         'group_id': selected.id,
-        'name': selected['name'],
-        'originalName': selected['name'],
-        'displayName': selected['name'],
-        'students': selected['students'],
-        'created_at': selected['created_at'],
-        'uploaded_by': selected['uploaded_by'],
+        'name': data['name'],
+        'originalName': data['name'],
+        'displayName': data['name'],
+        'students': data['students'],
+        'created_at': data['created_at'],
+        'uploaded_by': data['uploaded_by'],
+        'turno': turno,
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Grupo "${selected['name']}" asignado con éxito')),
+        SnackBar(
+          content: Text('Grupo "${data['name']}" asignado con éxito'),
+        ),
       );
     } catch (e) {
       setState(() => _error = 'Error al seleccionar grupo: $e');
@@ -103,10 +192,12 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         title: const Text('Eliminar grupo'),
         content: Text(
           '¿Seguro que deseas eliminar "$groupName"?\n\n'
-          'Esto eliminará también todo su historial de asistencias y calificaciones.',
+              'Esto eliminará también todo su historial de asistencias y calificaciones.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar')),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Eliminar todo'),
@@ -123,8 +214,14 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       await teacherRef.collection('assigned_groups').doc(groupId).delete();
 
       // Borrar asistencias y calificaciones del grupo
-      final attendanceRef = teacherRef.collection('attendance').doc(groupName).collection('sessions');
-      final gradesRef = teacherRef.collection('grades').doc(groupName).collection('activities');
+      final attendanceRef =
+      teacherRef.collection('attendance').doc(groupName).collection(
+        'sessions',
+      );
+      final gradesRef =
+      teacherRef.collection('grades').doc(groupName).collection(
+        'activities',
+      );
 
       final sessionsSnap = await attendanceRef.get();
       for (var doc in sessionsSnap.docs) {
@@ -168,7 +265,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar')),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, controller.text.trim()),
             child: const Text('Guardar'),
@@ -177,7 +276,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       ),
     );
 
-    if (newName == null || newName.isEmpty || newName == currentDisplay) return;
+    if (newName == null || newName.isEmpty || newName == currentDisplay) {
+      return;
+    }
 
     try {
       final uid = _auth.currentUser!.uid;
@@ -198,7 +299,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
   }
 
-  // 🔹 Cuerpo de asistencia (idéntico al tuyo)
+  // 🔹 Cuerpo de asistencia
   Widget _buildAttendanceBody() {
     final uid = _auth.currentUser!.uid;
 
@@ -213,7 +314,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
               icon: const Icon(Icons.add, color: Colors.white),
               label: Text(
                 _loading ? 'Cargando...' : 'Seleccionar grupo',
-                style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700, color: Colors.white),
               ),
               onPressed: _loading ? null : _selectGroup,
               style: ElevatedButton.styleFrom(
@@ -226,7 +328,10 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           ),
           const SizedBox(height: 16),
           if (_error != null)
-            Text(_error!, style: TextStyle(color: Colors.red.shade700, fontSize: 13)),
+            Text(
+              _error!,
+              style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+            ),
           const SizedBox(height: 16),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
@@ -242,7 +347,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
 
                 final docs = snap.data!.docs;
                 if (docs.isEmpty) {
-                  return const Center(child: Text('No has seleccionado ningún grupo.'));
+                  return const Center(
+                      child: Text('No has seleccionado ningún grupo.'));
                 }
 
                 return ListView.separated(
@@ -250,10 +356,15 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                   separatorBuilder: (_, __) => const SizedBox(height: 12),
                   itemBuilder: (context, i) {
                     final group = docs[i];
-                    final data = group.data() as Map<String, dynamic>? ?? {};
-                    final groupName = data['displayName'] ?? data['name'] ?? 'Sin nombre';
-                    final originalName = data['originalName'] ?? data['name'] ?? groupName;
+                    final data =
+                        group.data() as Map<String, dynamic>? ?? <String, dynamic>{};
+
+                    final groupName =
+                        data['displayName'] ?? data['name'] ?? 'Sin nombre';
+                    final originalName =
+                        data['originalName'] ?? data['name'] ?? groupName;
                     final rawStudents = data['students'] ?? [];
+                    final turno = (data['turno'] ?? '').toString();
 
                     final List<Student> students = [];
                     if (rawStudents is List) {
@@ -306,8 +417,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                     _deleteGroup(group.id, originalName);
                                   }
                                 },
-                                itemBuilder: (context) => [
-                                  const PopupMenuItem(
+                                itemBuilder: (context) => const [
+                                  PopupMenuItem(
                                     value: 'edit',
                                     child: Row(
                                       children: [
@@ -317,11 +428,12 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                       ],
                                     ),
                                   ),
-                                  const PopupMenuItem(
+                                  PopupMenuItem(
                                     value: 'delete',
                                     child: Row(
                                       children: [
-                                        Icon(Icons.delete_outline, color: Colors.redAccent),
+                                        Icon(Icons.delete_outline,
+                                            color: Colors.redAccent),
                                         SizedBox(width: 8),
                                         Text('Eliminar'),
                                       ],
@@ -332,8 +444,11 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                             ],
                           ),
                           const SizedBox(height: 6),
-                          Text('Alumnos: ${students.length}',
-                              style: TextStyle(color: Colors.grey.shade700)),
+                          Text(
+                            'Alumnos: ${students.length}' +
+                                (turno.isNotEmpty ? ' • Turno: $turno' : ''),
+                            style: TextStyle(color: Colors.grey.shade700),
+                          ),
                           const SizedBox(height: 10),
                           Row(
                             children: [
@@ -348,10 +463,12 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                             id: group.id,
                                             groupName: originalName,
                                             subject: 'Materia no especificada',
-                                            start: const TimeOfDay(hour: 7, minute: 0),
-                                            end: const TimeOfDay(hour: 8, minute: 0),
+                                            start: const TimeOfDay(
+                                                hour: 7, minute: 0),
+                                            end: const TimeOfDay(
+                                                hour: 8, minute: 0),
                                             students: students,
-                                            turno: 'Vespertino',
+                                            turno: turno,
                                             dia: '',
                                           ),
                                           initialDate: DateTime.now(),
@@ -366,7 +483,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                     ),
                                   ),
                                   child: Text('Tomar Lista $groupName'),
-                                  
                                 ),
                               ),
                               const SizedBox(width: 10),
@@ -376,17 +492,19 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                     Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (_) => AttendanceHistoryPage(
-                                                  groupName: originalName,      // nombre real (ej. 3E)
-                                                  displayName: groupName,       // nombre visual (ej. Humanidades 2)
-                                        ),
+                                        builder: (_) =>
+                                            AttendanceHistoryPage(
+                                              groupName: originalName,
+                                              displayName: groupName,
+                                            ),
                                       ),
                                     );
                                   },
                                   icon: const Icon(Icons.history),
                                   label: const Text('Historial'),
                                   style: OutlinedButton.styleFrom(
-                                    side: const BorderSide(color: Color(0xFFD32F2F)),
+                                    side: const BorderSide(
+                                        color: Color(0xFFD32F2F)),
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12),
                                     ),
@@ -408,7 +526,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     );
   }
 
-  // 🔹 Cuerpo de calificaciones (idéntico, pero con otros botones)
+  // 🔹 Cuerpo de calificaciones
   Widget _buildGradesBody() {
     final uid = _auth.currentUser!.uid;
 
@@ -435,11 +553,15 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, i) {
               final group = docs[i];
-              final data = group.data() as Map<String, dynamic>? ?? {};
+              final data =
+                  group.data() as Map<String, dynamic>? ?? <String, dynamic>{};
 
-              final groupName = data['displayName'] ?? data['name'] ?? 'Sin nombre';
-              final originalName = data['originalName'] ?? data['name'] ?? groupName;
+              final groupName =
+                  data['displayName'] ?? data['name'] ?? 'Sin nombre';
+              final originalName =
+                  data['originalName'] ?? data['name'] ?? groupName;
               final rawStudents = data['students'] ?? [];
+              final turno = (data['turno'] ?? '').toString();
 
               final List<Student> students = [];
               if (rawStudents is List) {
@@ -487,8 +609,11 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                       ],
                     ),
                     const SizedBox(height: 6),
-                    Text('Alumnos: ${students.length}',
-                        style: TextStyle(color: Colors.grey.shade700)),
+                    Text(
+                      'Alumnos: ${students.length}' +
+                          (turno.isNotEmpty ? ' • Turno: $turno' : ''),
+                      style: TextStyle(color: Colors.grey.shade700),
+                    ),
                     const SizedBox(height: 10),
                     Row(
                       children: [
@@ -503,10 +628,12 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                       id: group.id,
                                       groupName: originalName,
                                       subject: 'Materia no especificada',
-                                      start: const TimeOfDay(hour: 7, minute: 0),
-                                      end: const TimeOfDay(hour: 8, minute: 0),
+                                      start: const TimeOfDay(
+                                          hour: 7, minute: 0),
+                                      end: const TimeOfDay(
+                                          hour: 8, minute: 0),
                                       students: students,
-                                      turno: 'Vespertino',
+                                      turno: turno,
                                       dia: '',
                                     ),
                                   ),
@@ -535,10 +662,12 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                       id: group.id,
                                       groupName: originalName,
                                       subject: 'Materia no especificada',
-                                      start: const TimeOfDay(hour: 7, minute: 0),
-                                      end: const TimeOfDay(hour: 8, minute: 0),
+                                      start: const TimeOfDay(
+                                          hour: 7, minute: 0),
+                                      end: const TimeOfDay(
+                                          hour: 8, minute: 0),
                                       students: students,
-                                      turno: 'Vespertino',
+                                      turno: turno,
                                       dia: '',
                                     ),
                                   ),
@@ -575,7 +704,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         backgroundColor: Colors.white,
         title: const Text(
           'Control de asistencias CETIS 31',
-          style: TextStyle(fontWeight: FontWeight.w800, color: Colors.black87),
+          style:
+          TextStyle(fontWeight: FontWeight.w800, color: Colors.black87),
         ),
         actions: [
           IconButton(
@@ -585,7 +715,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         ],
       ),
       body: SafeArea(
-        child: _selectedIndex == 0 ? _buildAttendanceBody() : _buildGradesBody(),
+        child:
+        _selectedIndex == 0 ? _buildAttendanceBody() : _buildGradesBody(),
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,

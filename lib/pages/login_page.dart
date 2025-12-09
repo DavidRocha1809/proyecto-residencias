@@ -45,159 +45,237 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _submit() async {
-  if (!_formKey.currentState!.validate()) return;
-  if (!mounted) return; // Previene actualizaciones en estado destruido
+    if (!_formKey.currentState!.validate()) return;
+    if (!mounted) return;
 
-  setState(() {
-    _busy = true;
-    _error = null;
-  });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
 
-  final email = _emailCtrl.text.trim();
-  final pass = _passCtrl.text;
+    final email = _emailCtrl.text.trim();
+    final pass = _passCtrl.text;
 
-  try {
-    UserCredential cred;
-    if (_mode == _Mode.signIn) {
-      cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
+    try {
+      // 🔹 CASO 1: REGISTRO
+      if (_mode == _Mode.signUp) {
+        final cred = await FirebaseAuth.instance
+            .createUserWithEmailAndPassword(email: email, password: pass);
+
+        // Usuario nuevo -> queda como pendiente
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(cred.user!.uid)
+            .set({
+          'email': email,
+          'name': _nameCtrl.text.trim(),
+          'role': 'pending',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        // Cerramos sesión y mostramos mensaje
+        await FirebaseAuth.instance.signOut();
+
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _mode = _Mode.signIn; // cambiamos la vista a "Iniciar sesión"
+          _error =
+          'Tu cuenta ha sido registrada y está pendiente de autorización. '
+              'Ponerse en contacto con un administrador para revisar el acceso.';
+        });
+        return; // 👈 IMPORTANTE: no seguimos al flujo de login
+      }
+
+      // 🔹 CASO 2: LOGIN
+      final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email,
         password: pass,
       );
-    } else {
-      cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: email,
-        password: pass,
-      );
 
-      // Solo nuevos usuarios → se crean como teacher por defecto
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(cred.user!.uid)
-          .set({
-        'email': email,
-        'name': _nameCtrl.text.trim(),
-        'role': 'teacher',
+      await _saveRemembered(email, pass);
+
+      final uid = cred.user!.uid;
+      final snap =
+      await FirebaseFirestore.instance.collection('users').doc(uid).get();
+
+      if (!snap.exists) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error =
+          'Tu usuario no tiene rol asignado. Contacta con el administrador.';
+        });
+        await FirebaseAuth.instance.signOut();
+        return;
+      }
+
+      final role = snap['role'];
+
+      // 🚫 Bloquear usuarios pendientes al iniciar sesión
+      if (role == 'pending') {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error =
+          'Tu cuenta está pendiente de autorización. Ponerse en contacto con un administrador para revisar el acceso.';
+        });
+        await FirebaseAuth.instance.signOut();
+        return;
+      }
+
+      if (!mounted) return;
+      setState(() => _busy = false);
+
+      // 🔹 Navegación según rol
+      Future.microtask(() {
+        if (!mounted) return;
+        if (role == 'admin') {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const AdminHomePage()),
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const TeacherHomePage()),
+          );
+        }
       });
-    }
-
-    await _saveRemembered(email, pass);
-
-    final uid = cred.user!.uid;
-    final snap =
-        await FirebaseFirestore.instance.collection('users').doc(uid).get();
-
-    if (!snap.exists) {
+    } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       setState(() {
-        _error =
-            'Tu usuario no tiene rol asignado. Contacta con el administrador.';
+        _busy = false;
+        _error = e.message ?? e.code;
       });
-      await FirebaseAuth.instance.signOut();
-      return;
-    }
-
-    final role = snap['role'];
-
-    // 🔹 Asegúrate de que el widget sigue montado antes de navegar
-    if (!mounted) return;
-    setState(() => _busy = false);
-
-    // 🔹 Usa Future.microtask para permitir que Flutter libere el frame actual
-    Future.microtask(() {
+    } catch (e) {
       if (!mounted) return;
-      if (role == 'admin') {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const AdminHomePage()),
-        );
-      } else {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const TeacherHomePage()),
-        );
-      }
-    });
-  } on FirebaseAuthException catch (e) {
-    if (!mounted) return;
-    setState(() => _error = e.message ?? e.code);
-  } catch (e) {
-    if (!mounted) return;
-    setState(() => _error = e.toString());
-  } finally {
-    if (!mounted) return;
-    setState(() => _busy = false);
+      setState(() {
+        _busy = false;
+        _error = e.toString();
+      });
+    }
   }
-}
 
 
   Future<void> _resetPasswordPrompt() async {
-    final emailController = TextEditingController(text: _emailCtrl.text);
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return Dialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('Recuperar contraseña',
-                    style:
-                        TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                const SizedBox(height: 8),
-                const Text(
-                    'Ingresa el correo asociado a tu cuenta para recibir el enlace de recuperación.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 13)),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.mail_outline),
-                    labelText: 'Correo electrónico',
-                  ),
+  final emailController = TextEditingController(text: _emailCtrl.text);
+
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) {
+      return Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Recuperar contraseña',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Ingresa el correo asociado a tu cuenta para recibir el enlace de recuperación.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: emailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.mail_outline),
+                  labelText: 'Correo electrónico',
                 ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.of(ctx).pop(),
-                        child: const Text('Cancelar'),
-                      ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: const Text('Cancelar'),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: () async {
-                          final mail = emailController.text.trim();
-                          if (mail.isEmpty || !mail.contains('@')) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text('Correo inválido')));
-                            return;
-                          }
-                          Navigator.of(ctx).pop();
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () async {
+                        final mail = emailController.text.trim();
+
+                        if (mail.isEmpty || !mail.contains('@')) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Correo inválido'),
+                            ),
+                          );
+                          return;
+                        }
+
+                        Navigator.of(ctx).pop();
+
+                        try {
                           await FirebaseAuth.instance
                               .sendPasswordResetEmail(email: mail);
+
+                          if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text(
-                                      'Enlace de restablecimiento enviado')));
-                        },
-                        child: const Text('Enviar enlace'),
-                      ),
+                            const SnackBar(
+                              content: Text(
+                                'Si el correo existe en el sistema, se envió un enlace de restablecimiento.',
+                              ),
+                            ),
+                          );
+                        } on FirebaseAuthException catch (e) {
+                          if (!mounted) return;
+
+                          String msg;
+                          switch (e.code) {
+                            case 'invalid-email':
+                              msg = 'El correo no tiene un formato válido.';
+                              break;
+                            case 'user-not-found':
+                              msg =
+                                  'No existe ninguna cuenta registrada con ese correo.';
+                              break;
+                            case 'missing-android-pkg-name':
+                            case 'missing-ios-bundle-id':
+                            case 'invalid-continue-uri':
+                            case 'unauthorized-continue-uri':
+                              msg =
+                                  'Falta configurar el dominio de acción / enlace de redirección en Firebase Auth.';
+                              break;
+                            default:
+                              msg =
+                                  e.message ?? 'Error al enviar el correo: ${e.code}';
+                          }
+
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(msg)),
+                          );
+                        } catch (e) {
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Error inesperado: $e'),
+                            ),
+                          );
+                        }
+                      },
+                      child: const Text('Enviar enlace'),
                     ),
-                  ],
-                )
-              ],
-            ),
+                  ),
+                ],
+              ),
+            ],
           ),
-        );
-      },
-    );
-  }
+        ),
+      );
+    },
+  );
+}
+
+  
 
   Widget _buildCard(BuildContext context) {
     final isUp = _mode == _Mode.signUp;
