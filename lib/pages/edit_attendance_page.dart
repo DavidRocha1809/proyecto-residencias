@@ -1,7 +1,5 @@
-// lib/pages/edit_attendance_page.dart
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import '../services/attendance_service.dart';
 
 enum _St { present, late, absent }
 
@@ -40,10 +38,10 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
     // 🔹 Cargar los registros iniciales respetando su estado real
     _rows = widget.records
         .map((e) => _Row(
-              id: e['studentId'] ?? '',
-              name: e['name'] ?? '',
-              status: _parseStatus(e['status']),
-            ))
+      id: e['studentId'] ?? '',
+      name: e['name'] ?? '',
+      status: _parseStatus(e['status']),
+    ))
         .toList();
   }
 
@@ -78,34 +76,30 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
   }
 
   // ============================================================
-  // 🔹 Guardar cambios en Firestore
+  // 🔹 Guardar cambios (offline/online) usando AttendanceService
   // ============================================================
   Future<void> _saveChanges() async {
     setState(() => _saving = true);
-    final uid = FirebaseAuth.instance.currentUser!.uid;
-    final firestore = FirebaseFirestore.instance;
 
     final updatedRecords = _rows
         .map((r) => {
-              'studentId': r.id,
-              'name': r.name,
-              'status': _statusToString(r.status),
-            })
+      'studentId': r.id,
+      'name': r.name,
+      'status': _statusToString(r.status),
+    })
         .toList();
 
     try {
-      await firestore
-          .collection('teachers')
-          .doc(uid)
-          .collection('attendance')
-          .doc(widget.docId)
-          .update({'records': updatedRecords});
+      // utiliza el servicio para manejar offline/online
+      await AttendanceService.instance.updateSessionRecords(
+        docId: widget.docId,
+        records: updatedRecords,
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Cambios guardados correctamente.')),
         );
-
         // 🔹 Enviar señal para recargar datos al volver
         Navigator.pop(context, true);
       }
@@ -127,8 +121,8 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
   Widget build(BuildContext context) {
     final filtered = _rows
         .where((r) =>
-            r.name.toLowerCase().contains(_query.toLowerCase()) ||
-            r.id.contains(_query))
+    r.name.toLowerCase().contains(_query.toLowerCase()) ||
+        r.id.contains(_query))
         .toList();
 
     return Scaffold(
@@ -168,7 +162,7 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
                 return Card(
                   color: Colors.pink.shade50,
                   margin:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   child: ListTile(
                     title: Text(
                       r.name,
@@ -195,7 +189,7 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
                         Padding(
                           padding: EdgeInsets.symmetric(horizontal: 10),
                           child:
-                              Icon(Icons.check_circle, color: Colors.green),
+                          Icon(Icons.check_circle, color: Colors.green),
                         ),
                         Padding(
                           padding: EdgeInsets.symmetric(horizontal: 10),
@@ -205,7 +199,7 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
                         Padding(
                           padding: EdgeInsets.symmetric(horizontal: 10),
                           child:
-                              Icon(Icons.cancel, color: Colors.redAccent),
+                          Icon(Icons.cancel, color: Colors.redAccent),
                         ),
                       ],
                     ),

@@ -19,6 +19,8 @@ import 'pages/admin_home_page.dart';
 import 'pages/teacher_home_page.dart';
 
 import 'pages/edit_attendance_page.dart';
+import 'services/attendance_service.dart';
+import 'services/grades_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -55,6 +57,9 @@ class _AsistenciasAppState extends State<AsistenciasApp> {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+
+    await AttendanceService.instance.syncPendingData();
+    await GradesService.instance.syncPendingData();
 
     await _autoLoginIfNeeded();
   }

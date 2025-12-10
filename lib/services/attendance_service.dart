@@ -3,7 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
-
 class AttendanceService {
   AttendanceService._();
   static final instance = AttendanceService._();
@@ -80,52 +79,82 @@ class AttendanceService {
     }
   }
 
-   // ========================================================
-// 🔹 Listar sesiones guardadas (para reportes)
-// ========================================================
-Future<List<Map<String, dynamic>>> listSessions({
-  required String groupId,
-  DateTime? dateFrom,
-  DateTime? dateTo,
-  int limit = 1000,
-}) async {
-  final uid = _auth.currentUser!.uid;
-  final col = _firestore
-      .collection('teachers')
-      .doc(uid)
-      .collection('attendance');
+  /// 🔹 Actualiza el campo de registros en una sesión.
+  /// Si no hay conexión, actualiza el registro guardado en Hive o lo crea si no existe.
+  Future<void> updateSessionRecords({
+    required String docId,
+    required List<Map<String, dynamic>> records,
+  }) async {
+    final conn = await Connectivity().checkConnectivity();
+    if (conn == ConnectivityResult.none) {
+      final box = await Hive.openBox('offline_attendance');
+      final existing = box.get(docId);
+      if (existing != null && existing is Map) {
+        final data = Map<String, dynamic>.from(existing);
+        data['records'] = records;
+        data['timestamp'] = DateTime.now().toIso8601String();
+        await box.put(docId, data);
+      } else {
+        await box.put(docId, {
+          'records': records,
+          'timestamp': DateTime.now().toIso8601String(),
+        });
+      }
+      return;
+    }
 
-  Query query = col.where('groupId', isEqualTo: groupId);
-
-  if (dateFrom != null) {
-    query = query.where(
-      'date',
-      isGreaterThanOrEqualTo: dateFrom.toIso8601String(),
-    );
+    final uid = _auth.currentUser!.uid;
+    await _firestore
+        .collection('teachers')
+        .doc(uid)
+        .collection('attendance')
+        .doc(docId)
+        .update({'records': records});
   }
-  if (dateTo != null) {
-    query = query.where(
-      'date',
-      isLessThanOrEqualTo: dateTo.toIso8601String(),
-    );
+
+  // ========================================================
+  // 🔹 Listar sesiones guardadas (para reportes)
+  // ========================================================
+  Future<List<Map<String, dynamic>>> listSessions({
+    required String groupId,
+    DateTime? dateFrom,
+    DateTime? dateTo,
+    int limit = 1000,
+  }) async {
+    final uid = _auth.currentUser!.uid;
+    final col = _firestore
+        .collection('teachers')
+        .doc(uid)
+        .collection('attendance');
+
+    Query query = col.where('groupId', isEqualTo: groupId);
+
+    if (dateFrom != null) {
+      query = query.where(
+        'date',
+        isGreaterThanOrEqualTo: dateFrom.toIso8601String(),
+      );
+    }
+    if (dateTo != null) {
+      query = query.where(
+        'date',
+        isLessThanOrEqualTo: dateTo.toIso8601String(),
+      );
+    }
+
+    final snap = await query.limit(limit).get();
+
+    // ✅ Conversión segura con tipado explícito
+    final List<Map<String, dynamic>> sessions = snap.docs.map((doc) {
+      final Map<String, dynamic> data =
+          doc.data() as Map<String, dynamic>? ?? <String, dynamic>{};
+
+      // Agregamos el ID del documento
+      data['id'] = doc.id;
+
+      return data;
+    }).toList();
+
+    return sessions;
   }
-
-  final snap = await query.limit(limit).get();
-
-  // ✅ Conversión segura con tipado explícito
-  final List<Map<String, dynamic>> sessions = snap.docs.map((doc) {
-    final Map<String, dynamic> data =
-        doc.data() as Map<String, dynamic>? ?? <String, dynamic>{};
-
-    // Agregamos el ID del documento
-    data['id'] = doc.id;
-
-    return data;
-  }).toList();
-
-  return sessions;
-}
-
-
-
 }

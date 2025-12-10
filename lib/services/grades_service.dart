@@ -1,6 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+
 import '../models/grade_models.dart';
 
 class GradesService {
@@ -42,6 +45,44 @@ class GradesService {
     return '${d}__${slug.isEmpty ? 'actividad' : slug}';
   }
 
+  /// Nombre de la caja Hive utilizada para almacenar actividades de calificaciones offline.
+  static const String _offlineBoxName = 'offline_grades';
+
+  /// 🔄 Sincroniza actividades de calificaciones guardadas en Hive cuando hay conexión.
+  Future<void> syncPendingData() async {
+    final conn = await Connectivity().checkConnectivity();
+    if (conn == ConnectivityResult.none) return;
+
+    final box = await Hive.openBox(_offlineBoxName);
+    final keys = box.keys.toList();
+    for (final key in keys) {
+      final raw = box.get(key);
+      if (raw is Map) {
+        final data = Map<String, dynamic>.from(raw);
+        final String groupId = data['groupId'] as String;
+        final String activityId = data['activityId'] as String;
+        final String? oldActivityId = data['oldActivityId'] as String?;
+        final String title = data['title'] as String;
+        final String dateStr = data['date'] as String;
+        final Map<String, dynamic> grades =
+        Map<String, dynamic>.from(data['grades'] as Map);
+
+        final DateTime date = DateTime.parse(dateStr);
+        final col = _activitiesCol(groupId);
+        await col.doc(activityId).set({
+          'activity': title,
+          'date': DateFormat('yyyy-MM-dd').format(_onlyDate(date)),
+          'grades': grades,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        if (oldActivityId != null && oldActivityId != activityId) {
+          await col.doc(oldActivityId).delete();
+        }
+        await box.delete(key);
+      }
+    }
+  }
+
   // ================== CRUD PRINCIPAL ==================
   Future<String> createActivity({
     required String groupId,
@@ -50,10 +91,24 @@ class GradesService {
     required List<GradeRecord> records,
   }) async {
     final id = _buildActivityId(date, title);
+    final gradesMap = _toGradesMap(records);
+    final conn = await Connectivity().checkConnectivity();
+    if (conn == ConnectivityResult.none) {
+      final box = await Hive.openBox(_offlineBoxName);
+      await box.put(id, {
+        'groupId': groupId,
+        'activityId': id,
+        'oldActivityId': null,
+        'title': title,
+        'date': _onlyDate(date).toIso8601String(),
+        'grades': gradesMap,
+      });
+      return id;
+    }
     await _activitiesCol(groupId).doc(id).set({
       'activity': title,
       'date': DateFormat('yyyy-MM-dd').format(_onlyDate(date)),
-      'grades': _toGradesMap(records),
+      'grades': gradesMap,
       'updatedAt': FieldValue.serverTimestamp(),
     });
     return id;
@@ -67,13 +122,30 @@ class GradesService {
     required List<GradeRecord> records,
   }) async {
     final newId = _buildActivityId(date, title);
-    final col = _activitiesCol(groupId);
+    final gradesMap = _toGradesMap(records);
+    final conn = await Connectivity().checkConnectivity();
+    if (conn == ConnectivityResult.none) {
+      final box = await Hive.openBox(_offlineBoxName);
+      await box.put(newId, {
+        'groupId': groupId,
+        'activityId': newId,
+        'oldActivityId': newId == activityId ? null : activityId,
+        'title': title,
+        'date': _onlyDate(date).toIso8601String(),
+        'grades': gradesMap,
+      });
+      if (newId != activityId) {
+        await box.delete(activityId);
+      }
+      return newId;
+    }
 
+    final col = _activitiesCol(groupId);
     if (newId == activityId) {
       await col.doc(activityId).set({
         'activity': title,
         'date': DateFormat('yyyy-MM-dd').format(_onlyDate(date)),
-        'grades': _toGradesMap(records),
+        'grades': gradesMap,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       return activityId;
@@ -84,7 +156,7 @@ class GradesService {
         ...prev,
         'activity': title,
         'date': DateFormat('yyyy-MM-dd').format(_onlyDate(date)),
-        'grades': _toGradesMap(records),
+        'grades': gradesMap,
         'updatedAt': FieldValue.serverTimestamp(),
       });
       await col.doc(activityId).delete();
