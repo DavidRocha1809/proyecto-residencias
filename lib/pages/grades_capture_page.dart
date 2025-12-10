@@ -8,6 +8,8 @@ import '../models/grade_models.dart';
 import '../models.dart';
 import '../services/grades_service.dart';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
+
 class GradesCapturePage extends StatefulWidget {
   final GroupClass groupClass;
   final Map<String, dynamic>? existing;
@@ -100,66 +102,81 @@ class _GradesCapturePageState extends State<GradesCapturePage> {
   }
 
   Future<void> _save() async {
-  if (!_formKey.currentState!.validate()) return;
+    if (!_formKey.currentState!.validate()) return;
 
-  final title =
-      _titleCtrl.text.trim().isEmpty ? 'Actividad' : _titleCtrl.text.trim();
+    final title =
+    _titleCtrl.text.trim().isEmpty ? 'Actividad' : _titleCtrl.text.trim();
 
-  final grades = <String, dynamic>{};
-  for (final s in _students) {
-    final txt = _gradeCtrls[s.id]!.text.trim();
-    grades[s.id] = txt.isEmpty ? 0.0 : double.tryParse(txt) ?? 0.0;
-  }
-
-  try {
-    if (_activityId == null) {
-      _activityId = await GradesService.instance.createActivity(
-        groupId: widget.groupClass.id,
-        title: title,
-        date: _date,
-        records: grades.entries.map((e) {
-          final student = _students.firstWhere(
-            (s) => s.id == e.key,
-            orElse: () => Student(id: e.key, name: 'Sin nombre'),
-          );
-          return GradeRecord(
-            studentId: e.key,
-            studentName: student.name,
-            score: e.value as double, // 🔹 ahora siempre es double
-          );
-        }).toList(),
-      );
-    } else {
-      await GradesService.instance.updateActivity(
-        groupId: widget.groupClass.id,
-        activityId: _activityId!,
-        title: title,
-        date: _date,
-        records: grades.entries.map((e) {
-          final student = _students.firstWhere(
-            (s) => s.id == e.key,
-            orElse: () => Student(id: e.key, name: 'Sin nombre'),
-          );
-          return GradeRecord(
-            studentId: e.key,
-            studentName: student.name,
-            score: e.value as double, // 🔹 igual aquí
-          );
-        }).toList(),
-      );
+    final grades = <String, dynamic>{};
+    for (final s in _students) {
+      final txt = _gradeCtrls[s.id]!.text.trim();
+      grades[s.id] = txt.isEmpty ? 0.0 : double.tryParse(txt) ?? 0.0;
     }
 
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Actividad guardada')),
-    );
-    Navigator.pop(context, true);
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Error al guardar: $e')),
-    );
+    try {
+      if (_activityId == null) {
+        _activityId = await GradesService.instance.createActivity(
+          groupId: widget.groupClass.id,
+          title: title,
+          date: _date,
+          records: grades.entries.map((e) {
+            final student = _students.firstWhere(
+                  (s) => s.id == e.key,
+              orElse: () => Student(id: e.key, name: 'Sin nombre'),
+            );
+            return GradeRecord(
+              studentId: e.key,
+              studentName: student.name,
+              score: e.value as double,
+            );
+          }).toList(),
+        );
+      } else {
+        await GradesService.instance.updateActivity(
+          groupId: widget.groupClass.id,
+          activityId: _activityId!,
+          title: title,
+          date: _date,
+          records: grades.entries.map((e) {
+            final student = _students.firstWhere(
+                  (s) => s.id == e.key,
+              orElse: () => Student(id: e.key, name: 'Sin nombre'),
+            );
+            return GradeRecord(
+              studentId: e.key,
+              studentName: student.name,
+              score: e.value as double,
+            );
+          }).toList(),
+        );
+      }
+
+      if (!mounted) return;
+
+      // Verificar conectividad para escoger mensaje
+      final conn = await Connectivity().checkConnectivity();
+      if (conn == ConnectivityResult.none) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Actividad guardada sin conexión. Se sincronizará automáticamente cuando haya red.',
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Actividad guardada')),
+        );
+      }
+
+      Navigator.pop(context, true);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al guardar: $e')),
+      );
+    }
   }
-}
+
 
 
   @override

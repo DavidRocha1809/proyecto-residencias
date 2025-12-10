@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+
 import '../models.dart';
 import '../services/attendance_service.dart';
 
@@ -41,25 +43,41 @@ class _AttendancePageState extends State<AttendancePage> {
       setState(() => _loading = true);
 
       final uid = _auth.currentUser!.uid;
-      final docSnap = await _firestore
-          .collection('teachers')
-          .doc(uid)
-          .collection('assigned_groups')
-          .doc(widget.groupClass.id)
-          .get();
+      final conn = await Connectivity().checkConnectivity();
+
+      DocumentSnapshot<Map<String, dynamic>> docSnap;
+      if (conn == ConnectivityResult.none) {
+        // 📴 sin conexión: usar caché local de Firestore
+        await _firestore.disableNetwork();
+        docSnap = await _firestore
+            .collection('teachers')
+            .doc(uid)
+            .collection('assigned_groups')
+            .doc(widget.groupClass.id)
+            .get(const GetOptions(source: Source.cache));
+      } else {
+        // ☁️ con conexión: permitir red
+        await _firestore.enableNetwork();
+        docSnap = await _firestore
+            .collection('teachers')
+            .doc(uid)
+            .collection('assigned_groups')
+            .doc(widget.groupClass.id)
+            .get();
+      }
 
       if (!docSnap.exists) {
         throw Exception('El grupo no existe o no tiene alumnos.');
       }
 
       final studentsData =
-          List<Map<String, dynamic>>.from(docSnap.data()!['students']);
+      List<Map<String, dynamic>>.from(docSnap.data()!['students']);
       _students = studentsData
           .map((s) => Student(
-                id: s['matricula'] ?? '',
-                name: s['name'] ?? '',
-                status: AttendanceStatus.none,
-              ))
+        id: s['matricula'] ?? '',
+        name: s['name'] ?? '',
+        status: AttendanceStatus.none,
+      ))
           .toList();
 
       setState(() => _loading = false);
@@ -87,25 +105,42 @@ class _AttendancePageState extends State<AttendancePage> {
         date: _date,
         records: _students
             .map((s) => {
-                  'studentId': s.id,
-                  'name': s.name,
-                  'status': switch (s.status) {
-                    AttendanceStatus.present => 'present',
-                    AttendanceStatus.late => 'late',
-                    AttendanceStatus.absent => 'absent',
-                    _ => 'none',
-                  },
-                })
+          'studentId': s.id,
+          'name': s.name,
+          'status': switch (s.status) {
+            AttendanceStatus.present => 'present',
+            AttendanceStatus.late => 'late',
+            AttendanceStatus.absent => 'absent',
+            _ => 'none',
+          },
+        })
             .toList(),
       );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Lista guardada con éxito')),
-      );
+      // 🔔 Mostrar mensaje según la conectividad y cerrar pantalla
+      final conn = await Connectivity().checkConnectivity();
+      if (!mounted) return;
+      if (conn == ConnectivityResult.none) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Lista guardada sin conexión. Se sincronizará automáticamente cuando haya red.',
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Lista guardada con éxito')),
+        );
+      }
+
+      Navigator.pop(context, true);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al guardar: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al guardar: $e')),
+        );
+      }
     }
   }
 
@@ -115,10 +150,10 @@ class _AttendancePageState extends State<AttendancePage> {
     final filtered = _query.isEmpty
         ? _students
         : _students
-            .where((s) =>
-                s.name.toLowerCase().contains(_query.toLowerCase()) ||
-                s.id.toLowerCase().contains(_query.toLowerCase()))
-            .toList();
+        .where((s) =>
+    s.name.toLowerCase().contains(_query.toLowerCase()) ||
+        s.id.toLowerCase().contains(_query.toLowerCase()))
+        .toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -141,86 +176,86 @@ class _AttendancePageState extends State<AttendancePage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: TextField(
-                    decoration: InputDecoration(
-                      hintText: 'Buscar estudiante...',
-                      prefixIcon: const Icon(Icons.search),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                    ),
-                    onChanged: (v) => setState(() => _query = v),
-                  ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              decoration: InputDecoration(
+                hintText: 'Buscar estudiante...',
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(20),
                 ),
-                Expanded(
-                  child: filtered.isEmpty
-                      ? const Center(child: Text('No hay alumnos.'))
-                      : ListView.builder(
-                          itemCount: filtered.length,
-                          itemBuilder: (_, i) {
-                            final s = filtered[i];
-                            return Card(
-                              color: Colors.pink.shade50,
-                              margin: const EdgeInsets.all(8),
-                              child: ListTile(
-                                title: Text(s.name),
-                                subtitle: Text('Matrícula: ${s.id}'),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.check_circle),
-                                      color:
-                                          s.status == AttendanceStatus.present
-                                              ? Colors.green
-                                              : Colors.grey,
-                                      onPressed: () => setState(() {
-                                        s.status = AttendanceStatus.present;
-                                      }),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.access_time),
-                                      color: s.status == AttendanceStatus.late
-                                          ? Colors.orange
-                                          : Colors.grey,
-                                      onPressed: () => setState(() {
-                                        s.status = AttendanceStatus.late;
-                                      }),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.cancel),
-                                      color: s.status == AttendanceStatus.absent
-                                          ? Colors.red
-                                          : Colors.grey,
-                                      onPressed: () => setState(() {
-                                        s.status = AttendanceStatus.absent;
-                                      }),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.redAccent,
-                      minimumSize: const Size.fromHeight(50),
-                    ),
-                    icon: const Icon(Icons.save),
-                    label: const Text('Guardar lista'),
-                    onPressed: _save,
-                  ),
-                ),
-              ],
+              ),
+              onChanged: (v) => setState(() => _query = v),
             ),
+          ),
+          Expanded(
+            child: filtered.isEmpty
+                ? const Center(child: Text('No hay alumnos.'))
+                : ListView.builder(
+              itemCount: filtered.length,
+              itemBuilder: (_, i) {
+                final s = filtered[i];
+                return Card(
+                  color: Colors.pink.shade50,
+                  margin: const EdgeInsets.all(8),
+                  child: ListTile(
+                    title: Text(s.name),
+                    subtitle: Text('Matrícula: ${s.id}'),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.check_circle),
+                          color:
+                          s.status == AttendanceStatus.present
+                              ? Colors.green
+                              : Colors.grey,
+                          onPressed: () => setState(() {
+                            s.status = AttendanceStatus.present;
+                          }),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.access_time),
+                          color: s.status == AttendanceStatus.late
+                              ? Colors.orange
+                              : Colors.grey,
+                          onPressed: () => setState(() {
+                            s.status = AttendanceStatus.late;
+                          }),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.cancel),
+                          color: s.status == AttendanceStatus.absent
+                              ? Colors.red
+                              : Colors.grey,
+                          onPressed: () => setState(() {
+                            s.status = AttendanceStatus.absent;
+                          }),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                minimumSize: const Size.fromHeight(50),
+              ),
+              icon: const Icon(Icons.save),
+              label: const Text('Guardar lista'),
+              onPressed: _save,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

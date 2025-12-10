@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/attendance_service.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 enum _St { present, late, absent }
 
@@ -90,19 +91,30 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
         .toList();
 
     try {
-      // utiliza el servicio para manejar offline/online
       await AttendanceService.instance.updateSessionRecords(
         docId: widget.docId,
         records: updatedRecords,
       );
 
-      if (mounted) {
+      if (!mounted) return;
+
+      // Comprobar conectividad para decidir mensaje
+      final conn = await Connectivity().checkConnectivity();
+      if (conn == ConnectivityResult.none) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Cambios guardados sin conexión. Se sincronizarán automáticamente cuando haya red.',
+            ),
+          ),
+        );
+      } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Cambios guardados correctamente.')),
         );
-        // 🔹 Enviar señal para recargar datos al volver
-        Navigator.pop(context, true);
       }
+
+      Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -113,6 +125,7 @@ class _EditAttendancePageState extends State<EditAttendancePage> {
       if (mounted) setState(() => _saving = false);
     }
   }
+
 
   // ============================================================
   // 🔹 UI

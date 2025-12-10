@@ -1,4 +1,5 @@
 // lib/main.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -48,18 +49,23 @@ class _AsistenciasAppState extends State<AsistenciasApp> {
   Future<void> _initServices() async {
     final dir = await pp.getApplicationDocumentsDirectory();
     await Hive.initFlutter(dir.path);
-    await Hive.openBox('sessions');
-    await Hive.openBox('groups');
-
-    await initializeDateFormatting('es_MX');
-    Intl.defaultLocale = 'es_MX';
 
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
 
-    await AttendanceService.instance.syncPendingData();
-    await GradesService.instance.syncPendingData();
+    // Abrir cajas en paralelo para mejorar el tiempo de arranque
+    await Future.wait([
+      Hive.openBox('sessions'),
+      Hive.openBox('groups'),
+    ]);
+
+    await initializeDateFormatting('es_MX');
+    Intl.defaultLocale = 'es_MX';
+
+    // Lanzar sincronización de pendientes sin bloquear el inicio
+    unawaited(AttendanceService.instance.syncPendingData());
+    unawaited(GradesService.instance.syncPendingData());
 
     await _autoLoginIfNeeded();
   }
@@ -99,18 +105,18 @@ class _AsistenciasAppState extends State<AsistenciasApp> {
       supportedLocales: const [Locale('es', 'MX'), Locale('en', 'US')],
       locale: const Locale('es', 'MX'),
 
-      // 🔹 Aquí se registran las rutas globales
+      // 🔹 Rutas globales
       routes: {
         '/home': (context) => const TeacherHomePage(),
         '/editAttendance': (context) => EditAttendancePage(
-              docId: '',
-              subject: '',
-              groupName: '',
-              start: '',
-              end: '',
-              date: DateTime.now(),
-              records: [],
-            ),
+          docId: '',
+          subject: '',
+          groupName: '',
+          start: '',
+          end: '',
+          date: DateTime.now(),
+          records: [],
+        ),
       },
 
       home: FutureBuilder<void>(
