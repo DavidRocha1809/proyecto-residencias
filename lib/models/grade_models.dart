@@ -1,5 +1,4 @@
 // lib/models/grade_models.dart
-import 'package:flutter/material.dart';
 
 /// Un registro de calificación para un alumno en una actividad.
 class GradeRecord {

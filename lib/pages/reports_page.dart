@@ -16,8 +16,8 @@ class ReportsPage extends StatefulWidget {
 }
 
 class _ReportsPageState extends State<ReportsPage> {
-  ReportPeriod _period = ReportPeriod.daily;
-  DateTime _anchor = DateTime.now();
+  final ReportPeriod _period = ReportPeriod.daily;
+  final DateTime _anchor = DateTime.now();
   DateTimeRange? _range;
   bool _loading = false;
   final List<Map<String, dynamic>> _rows = [];

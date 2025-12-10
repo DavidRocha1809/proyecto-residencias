@@ -141,13 +141,28 @@ class _AdminHomePageState extends State<AdminHomePage> {
 
         if (students.isNotEmpty) {
           alumnosDetectados = true;
-          await FirebaseFirestore.instance.collection('groups').add({
+
+          final teacherUid = FirebaseAuth.instance.currentUser!.uid;
+
+          // 🔑 ID único usando nombre de grupo + turno
+          final rawId = '${groupName}_$turno'.toLowerCase();
+          final groupId = rawId
+              .replaceAll(RegExp(r'[^a-z0-9]+'), '-') // solo letras/números separados por guiones
+              .replaceAll(RegExp(r'-+'), '-')         // evita guiones dobles
+              .replaceAll(RegExp(r'^-|-$'), '');      // quita guiones al inicio/fin
+
+          await FirebaseFirestore.instance
+              .collection('groups')
+              .doc(groupId) // <- usamos nuestro propio ID
+              .set({
             'name': groupName,
-            'uploaded_by': FirebaseAuth.instance.currentUser!.uid,
+            'turno': turno,              // ✅ ahora sí guardamos el turno
+            'uploaded_by': teacherUid,
             'students': students,
             'created_at': Timestamp.now(),
-          });
+          }, SetOptions(merge: true));   // merge para no perder otros campos si ya existían
         }
+
       }
 
       if (!alumnosDetectados) {

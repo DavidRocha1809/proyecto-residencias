@@ -25,7 +25,7 @@ class _LoginPageState extends State<LoginPage> {
   _Mode _mode = _Mode.signIn;
   bool _busy = false;
   String? _error;
-  bool _remember = true;
+  final bool _remember = true;
 
   @override
   void dispose() {

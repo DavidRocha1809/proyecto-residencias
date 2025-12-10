@@ -1,4 +1,5 @@
 // lib/pages/teacher_home_page.dart
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -445,8 +446,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Alumnos: ${students.length}' +
-                                (turno.isNotEmpty ? ' • Turno: $turno' : ''),
+                            'Alumnos: ${students.length}${turno.isNotEmpty ? ' • Turno: $turno' : ''}',
                             style: TextStyle(color: Colors.grey.shade700),
                           ),
                           const SizedBox(height: 10),
@@ -482,7 +482,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                   ),
-                                  child: Text('Tomar Lista $groupName'),
+                                  child: Text('Tomar Lista $groupName', style: TextStyle(color: Colors.black),),
                                 ),
                               ),
                               const SizedBox(width: 10),
@@ -610,8 +610,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Alumnos: ${students.length}' +
-                          (turno.isNotEmpty ? ' • Turno: $turno' : ''),
+                      'Alumnos: ${students.length}${turno.isNotEmpty ? ' • Turno: $turno' : ''}',
                       style: TextStyle(color: Colors.grey.shade700),
                     ),
                     const SizedBox(height: 10),
@@ -640,8 +639,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                 ),
                               );
                             },
-                            icon: const Icon(Icons.edit_note),
-                            label: Text('Capturar $groupName'),
+                            icon: const Icon(Icons.edit_note, color: Colors.black, ),
+                            label: Text('Capturar $groupName', style: TextStyle(color: Colors.black),),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFFD32F2F),
                               shape: RoundedRectangleBorder(

@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -204,7 +203,7 @@ class GradesPdf {
         subtitle: '${subject ?? ''} ${groupName ?? ''}\nFecha: $formattedDate',
         header: const ['Matrícula', 'Nombre', 'Calificación'],
         rows: rows,
-        filename: 'calificaciones_${activityId}.pdf',
+        filename: 'calificaciones_$activityId.pdf',
       );
 
       print('✅ PDF individual generado correctamente para $activityName');
