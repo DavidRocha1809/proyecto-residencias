@@ -64,7 +64,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '430808314566',
     projectId: 'cetis-asistencia',
     storageBucket: 'cetis-asistencia.firebasestorage.app',
-    iosBundleId: 'com.example.paseDeLista',
+    iosBundleId: 'com.cetis31.paseDeLista',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
@@ -73,7 +73,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '430808314566',
     projectId: 'cetis-asistencia',
     storageBucket: 'cetis-asistencia.firebasestorage.app',
-    iosBundleId: 'com.example.paseDeLista',
+    iosBundleId: 'com.cetis31.paseDeLista',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(

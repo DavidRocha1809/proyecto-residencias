@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    package="com.cetis31.control_escolar">
     <application
-        android:label="pase_de_lista"
+        android:label="Control Escolar C031"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

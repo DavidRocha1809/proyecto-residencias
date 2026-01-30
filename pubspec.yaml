@@ -1,8 +1,8 @@
-name: pase_de_lista
+name: control_escolar
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: ^3.7.2

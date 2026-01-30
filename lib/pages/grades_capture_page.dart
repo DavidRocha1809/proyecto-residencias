@@ -3,12 +3,11 @@ import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/services.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 import '../models/grade_models.dart';
 import '../models.dart';
 import '../services/grades_service.dart';
-
-import 'package:connectivity_plus/connectivity_plus.dart';
 
 class GradesCapturePage extends StatefulWidget {
   final GroupClass groupClass;
@@ -28,11 +27,9 @@ class _GradesCapturePageState extends State<GradesCapturePage> {
   final _formKey = GlobalKey<FormState>();
   final _titleCtrl = TextEditingController();
   DateTime _date = DateTime.now();
-
   final Map<String, TextEditingController> _gradeCtrls = {};
   bool _loading = true;
   List<Student> _students = [];
-
   String? _activityId;
 
   @override
@@ -48,23 +45,37 @@ class _GradesCapturePageState extends State<GradesCapturePage> {
       if (uid == null) throw Exception('No hay usuario autenticado.');
 
       final groupId = widget.groupClass.id;
-      final docSnap = await FirebaseFirestore.instance
-          .collection('teachers')
-          .doc(uid)
-          .collection('assigned_groups')
-          .doc(groupId)
-          .get();
+      final conn = await Connectivity().checkConnectivity();
+      DocumentSnapshot<Map<String, dynamic>> docSnap;
+      if (conn == ConnectivityResult.none) {
+        // 📴 sin conexión: desactivar red y usar caché
+        await FirebaseFirestore.instance.disableNetwork();
+        docSnap = await FirebaseFirestore.instance
+            .collection('teachers')
+            .doc(uid)
+            .collection('assigned_groups')
+            .doc(groupId)
+            .get(const GetOptions(source: Source.cache));
+      } else {
+        // ☁️ con conexión: habilitar red y obtener datos en línea
+        await FirebaseFirestore.instance.enableNetwork();
+        docSnap = await FirebaseFirestore.instance
+            .collection('teachers')
+            .doc(uid)
+            .collection('assigned_groups')
+            .doc(groupId)
+            .get();
+      }
 
       if (!docSnap.exists) throw Exception('El grupo no existe.');
 
       final data = docSnap.data()!;
       final studentsData = data['students'] ?? [];
-
       final studs = List<Map<String, dynamic>>.from(studentsData)
           .map((s) => Student(
-                id: s['matricula'] ?? '',
-                name: s['name'] ?? '',
-              ))
+        id: s['matricula'] ?? '',
+        name: s['name'] ?? '',
+      ))
           .toList()
         ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
@@ -106,7 +117,6 @@ class _GradesCapturePageState extends State<GradesCapturePage> {
 
     final title =
     _titleCtrl.text.trim().isEmpty ? 'Actividad' : _titleCtrl.text.trim();
-
     final grades = <String, dynamic>{};
     for (final s in _students) {
       final txt = _gradeCtrls[s.id]!.text.trim();
@@ -177,8 +187,6 @@ class _GradesCapturePageState extends State<GradesCapturePage> {
     }
   }
 
-
-
   @override
   Widget build(BuildContext context) {
     final df = DateFormat('dd/MM/yyyy');
@@ -191,98 +199,97 @@ class _GradesCapturePageState extends State<GradesCapturePage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _students.isEmpty
-              ? const Center(
-                  child: Text('No hay alumnos registrados en este grupo.'),
-                )
-              : Form(
-                  key: _formKey,
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
-                    children: [
-                      TextFormField(
-                        controller: _titleCtrl,
+          ? const Center(
+        child: Text('No hay alumnos registrados en este grupo.'),
+      )
+          : Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
+          children: [
+            TextFormField(
+              controller: _titleCtrl,
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.assignment_outlined),
+                labelText: 'Nombre de la actividad',
+              ),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: _date,
+                  firstDate: DateTime(_date.year - 1),
+                  lastDate: DateTime(_date.year + 1),
+                  locale: const Locale('es', 'MX'),
+                );
+                if (picked != null) setState(() => _date = picked);
+              },
+              icon: const Icon(Icons.event),
+              label: Text('Fecha: ${df.format(_date)}'),
+            ),
+            const SizedBox(height: 12),
+            ..._students.map((s) {
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.pink.shade50,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 14),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(s.name,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 4),
+                          Text('Matrícula: ${s.id}',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: 100,
+                      child: TextFormField(
+                        controller: _gradeCtrls[s.id],
+                        textAlign: TextAlign.right,
+                        keyboardType:
+                        const TextInputType.numberWithOptions(
+                            decimal: true),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                              RegExp(r'^\d{0,3}(\.\d{0,2})?\$')),
+                          _GradeRangeFormatter(),
+                        ],
                         decoration: const InputDecoration(
-                          prefixIcon: Icon(Icons.assignment_outlined),
-                          labelText: 'Nombre de la actividad',
+                          hintText: '0 - 100',
+                          border: UnderlineInputBorder(),
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      OutlinedButton.icon(
-                        onPressed: () async {
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate: _date,
-                            firstDate: DateTime(_date.year - 1),
-                            lastDate: DateTime(_date.year + 1),
-                            locale: const Locale('es', 'MX'),
-                          );
-                          if (picked != null) setState(() => _date = picked);
-                        },
-                        icon: const Icon(Icons.event),
-                        label: Text('Fecha: ${df.format(_date)}'),
-                      ),
-                      const SizedBox(height: 12),
-                      ..._students.map((s) {
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          decoration: BoxDecoration(
-                            color: Colors.pink.shade50,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 14),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(s.name,
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w600)),
-                                    const SizedBox(height: 4),
-                                    Text('Matrícula: ${s.id}',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              SizedBox(
-                                width: 100,
-                                child: TextFormField(
-                                  controller: _gradeCtrls[s.id],
-                                  textAlign: TextAlign.right,
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                          decimal: true),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                        RegExp(r'^\d{0,3}(\.\d{0,2})?$')),
-                                    _GradeRangeFormatter(),
-                                  ],
-                                  decoration: const InputDecoration(
-                                    hintText: '0 - 100',
-                                    border: UnderlineInputBorder(),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-      // 🔹 Nuevo botón inferior como en pase de lista
+              );
+            }),
+          ],
+        ),
+      ),
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: Color(0xFFD32F2F),
+              backgroundColor: const Color(0xFFD32F2F),
               foregroundColor: Colors.white,
               minimumSize: const Size(double.infinity, 50),
               shape: RoundedRectangleBorder(
@@ -306,9 +313,9 @@ class _GradesCapturePageState extends State<GradesCapturePage> {
 class _GradeRangeFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
+      TextEditingValue oldValue,
+      TextEditingValue newValue,
+      ) {
     if (newValue.text.isEmpty) return newValue;
 
     final doubleValue = double.tryParse(newValue.text);
